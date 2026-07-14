@@ -274,38 +274,42 @@ async function processOrder(order) {
     );
 
     return "created";
-  } catch (error) {
+    } catch (error) {
     /*
-     * This reproduces Make's error route:
-     * find another UOL record with the
-     * same tracking number and an already
-     * filled Shipping Status.
+     * Alleen de bestaande-trackingfallback uitvoeren
+     * wanneer AfterShip daadwerkelijk meldt dat de
+     * tracking al bestaat.
+     *
+     * Andere fouten, zoals 401, 422, 500 of een
+     * netwerkfout, mogen niet als duplicate worden
+     * behandeld.
      */
+    if (!isDuplicateTrackingError(error)) {
+      throw error;
+    }
+  
     const existing =
       await findExistingTrackedOrder(
         normalizedTrackingNumber,
         order.id
       );
-
+  
     const existingTrackingUrl =
-      existing?.fields?.[
-        "Tracking URL"
-      ];
-
+      existing?.fields?.["Tracking URL"];
+  
     if (!existingTrackingUrl) {
       throw error;
     }
-
+  
     await applyTracking(order, {
       trackingNumber:
         normalizedTrackingNumber,
       trackingUrl:
         existingTrackingUrl,
     });
-
+  
     console.log(
-      "[tracking-creation] " +
-      "REUSED_EXISTING",
+      "[tracking-creation] REUSED_EXISTING",
       audit(order, {
         carrierRoute:
           isUps ? "UPS" : "DPD",
@@ -314,11 +318,14 @@ async function processOrder(order) {
           existing.id,
         trackingUrl:
           existingTrackingUrl,
-        originalAfterShipError:
+        duplicateErrorCode:
+          error?.body?.meta?.code ?? null,
+        duplicateErrorMessage:
+          error?.body?.meta?.message ??
           error.message,
       })
     );
-
+  
     return "reusedExisting";
   }
 }
@@ -471,6 +478,23 @@ async function findExternalSale(
     );
 
   return records[0] || null;
+}
+
+function isDuplicateTrackingError(error) {
+  const metaCode = Number(
+    error?.body?.meta?.code
+  );
+
+  const message = String(
+    error?.body?.meta?.message ||
+    error?.message ||
+    ""
+  );
+
+  return (
+    metaCode === 4003 ||
+    /tracking already exists/i.test(message)
+  );
 }
 
 function buildDpdTrackingUrl(
