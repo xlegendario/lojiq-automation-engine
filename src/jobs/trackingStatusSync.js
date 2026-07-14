@@ -86,7 +86,7 @@ async function handleShipped(order) {
   const external = await findExternalSale(order.fields["Order ID"]);
   if (external && !config.shadowMode) {
     await updateRecord(config.externalBaseId, config.externalSalesTableId, external.id, {
-      Status: "Shipped",
+      "Shipping Status": "Shipped",
     });
   }
 
@@ -115,7 +115,7 @@ async function handleDelivered(order) {
     await sendDeliveredDiscord({ order, seller, inventoryUnit });
     if (external) {
       await updateRecord(config.externalBaseId, config.externalSalesTableId, external.id, {
-        Status: "Delivered",
+        "Shipping Status": "Delivered",
       });
     }
   }
@@ -132,7 +132,7 @@ async function findExternalSale(orderId) {
   const formula = `{Order Number} = '${escapeFormulaString(orderId)}'`;
   const records = await listRecords(config.externalBaseId, config.externalSalesTableId, {
     formula,
-    fields: ["Order Number", "Status"],
+    fields: ["Order Number", "Shipping Status"],
   });
   return records[0] || null;
 }
