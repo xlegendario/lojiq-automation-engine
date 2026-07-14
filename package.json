@@ -1,13 +1,15 @@
 {
   "name": "lojiq-automation-engine",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "check": "node --check src/index.js && node --check src/jobs/trackingStatusSync.js"
+    "check": "node --check src/index.js && node --check src/jobs/trackingStatusSync.js && node --check src/jobs/trackingCreationSync.js && node --check src/services/aftership.js"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "express": "^5.1.0",
     "node-cron": "^4.2.1",
