@@ -145,76 +145,55 @@ export async function runTrackingCreationSync({
 async function processOrder(order) {
   const fields = order.fields;
 
-  const shopifyOrderNumber =
-    String(
-      fields[
-        "Shopify Order Number"
-      ] || ""
-    );
+  const shopifyOrderNumber = String(
+    fields["Shopify Order Number"] || ""
+  );
 
   // Exact Make router:
-  // Shopify Order Number must not contain
-  // "Private".
-  if (
-    shopifyOrderNumber.includes(
-      "Private"
-    )
-  ) {
+  // Shopify Order Number mag niet "Private" bevatten.
+  if (shopifyOrderNumber.includes("Private")) {
     console.log(
-      "[tracking-creation] " +
-      "SKIPPED_PRIVATE",
+      "[tracking-creation] SKIPPED_PRIVATE",
       audit(order)
     );
 
     return "skippedPrivate";
   }
 
-  const rawTrackingNumber =
-    String(
-      fields["Tracking Number"] || ""
-    ).trim();
+  const rawTrackingNumber = String(
+    fields["Tracking Number"] || ""
+  ).trim();
 
-  const isUps =
-    rawTrackingNumber
-      .toUpperCase()
-      .startsWith("1Z");
+  const isUps = rawTrackingNumber
+    .toUpperCase()
+    .startsWith("1Z");
 
   /*
    * Make behavior:
-   * UPS -> full number
-   * non-UPS / DPD -> first exact
-   * 14-digit sequence.
+   * UPS -> volledig trackingnummer
+   * Niet-UPS / DPD -> eerste reeks van exact 14 cijfers
    */
-  const normalizedTrackingNumber =
-    isUps
-      ? rawTrackingNumber
-      : rawTrackingNumber.match(
-          /\d{14}/
-        )?.[0];
+  const normalizedTrackingNumber = isUps
+    ? rawTrackingNumber
+    : rawTrackingNumber.match(/\d{14}/)?.[0];
 
   if (!normalizedTrackingNumber) {
     console.warn(
-      "[tracking-creation] " +
-      "INVALID_TRACKING",
+      "[tracking-creation] INVALID_TRACKING",
       audit(order, {
         rawTrackingNumber,
-        carrierRoute:
-          isUps ? "UPS" : "DPD",
+        carrierRoute: isUps ? "UPS" : "DPD",
       })
     );
 
     return "invalidTracking";
   }
 
-  if (
-    config.trackingCreationShadowMode
-  ) {
+  if (config.trackingCreationShadowMode) {
     console.log(
-      "[tracking-creation] " +
-      "WOULD_CREATE",
+      "[tracking-creation] WOULD_CREATE",
       audit(order, {
-        carrierRoute:
-          isUps ? "UPS" : "DPD",
+        carrierRoute: isUps ? "UPS" : "DPD",
         normalizedTrackingNumber,
       })
     );
@@ -223,50 +202,37 @@ async function processOrder(order) {
   }
 
   try {
-    const tracking =
-      await createTracking({
-        trackingNumber:
-          normalizedTrackingNumber,
-        orderId:
-          fields["Order ID"],
-        airtableRecordId:
-          order.id,
-      });
+    const tracking = await createTracking({
+      trackingNumber: normalizedTrackingNumber,
+      orderId: fields["Order ID"],
+      airtableRecordId: order.id,
+    });
 
-    const createdTrackingNumber =
-      String(
-        tracking?.title ||
+    const createdTrackingNumber = String(
+      tracking?.title ||
         tracking?.tracking_number ||
         normalizedTrackingNumber
-      );
+    );
 
-    const trackingUrl =
-      isUps
-        ? tracking
-            ?.courier_tracking_link
-        : buildDpdTrackingUrl(
-            createdTrackingNumber
-          );
+    const trackingUrl = isUps
+      ? tracking?.courier_tracking_link
+      : buildDpdTrackingUrl(createdTrackingNumber);
 
     if (!trackingUrl) {
       throw new Error(
-        "AfterShip created the " +
-        "tracking but returned no " +
-        "courier tracking link"
+        "AfterShip created the tracking but returned no courier tracking link"
       );
     }
 
     await applyTracking(order, {
-      trackingNumber:
-        createdTrackingNumber,
+      trackingNumber: createdTrackingNumber,
       trackingUrl,
     });
 
     console.log(
       "[tracking-creation] CREATED",
       audit(order, {
-        carrierRoute:
-          isUps ? "UPS" : "DPD",
+        carrierRoute: isUps ? "UPS" : "DPD",
         normalizedTrackingNumber,
         createdTrackingNumber,
         trackingUrl,
@@ -274,50 +240,39 @@ async function processOrder(order) {
     );
 
     return "created";
-    } catch (error) {
+  } catch (error) {
     /*
-     * Alleen de bestaande-trackingfallback uitvoeren
-     * wanneer AfterShip daadwerkelijk meldt dat de
-     * tracking al bestaat.
-     *
-     * Andere fouten, zoals 401, 422, 500 of een
-     * netwerkfout, mogen niet als duplicate worden
-     * behandeld.
+     * Alleen fallback uitvoeren als AfterShip echt meldt
+     * dat deze tracking al bestaat.
      */
     if (!isDuplicateTrackingError(error)) {
       throw error;
     }
-  
-    const existing =
-      await findExistingTrackedOrder(
-        normalizedTrackingNumber,
-        order.id
-      );
-  
+
+    const existing = await findExistingTrackedOrder(
+      normalizedTrackingNumber,
+      order.id
+    );
+
     const existingTrackingUrl =
       existing?.fields?.["Tracking URL"];
-  
+
     if (!existingTrackingUrl) {
       throw error;
     }
-  
+
     await applyTracking(order, {
-      trackingNumber:
-        normalizedTrackingNumber,
-      trackingUrl:
-        existingTrackingUrl,
+      trackingNumber: normalizedTrackingNumber,
+      trackingUrl: existingTrackingUrl,
     });
-  
+
     console.log(
       "[tracking-creation] REUSED_EXISTING",
       audit(order, {
-        carrierRoute:
-          isUps ? "UPS" : "DPD",
+        carrierRoute: isUps ? "UPS" : "DPD",
         normalizedTrackingNumber,
-        sourceRecordId:
-          existing.id,
-        trackingUrl:
-          existingTrackingUrl,
+        sourceRecordId: existing.id,
+        trackingUrl: existingTrackingUrl,
         duplicateErrorCode:
           error?.body?.meta?.code ?? null,
         duplicateErrorMessage:
@@ -325,7 +280,7 @@ async function processOrder(order) {
           error.message,
       })
     );
-  
+
     return "reusedExisting";
   }
 }
