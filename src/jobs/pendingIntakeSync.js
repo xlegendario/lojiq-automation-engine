@@ -210,11 +210,30 @@ async function processRecord(record) {
     );
 
   if (skipKeyword) {
+    if (config.pendingIntakeShadowMode) {
+      console.log(
+        "[pending-intake] WOULD_SKIP_KEYWORD_AND_MARK_TAKEN",
+        audit(record, { skipKeyword })
+      );
+  
+      return "skippedKeyword";
+    }
+  
+    await updateRecord(
+      config.mainBaseId,
+      config.pendingIntakeTableId,
+      record.id,
+      {
+        "Order Taken?": true,
+        Notes: `Pending Intake Skipped: ${skipKeyword}`,
+      }
+    );
+  
     console.log(
-      "[pending-intake] SKIPPED_KEYWORD",
+      "[pending-intake] SKIPPED_KEYWORD_AND_MARKED_TAKEN",
       audit(record, { skipKeyword })
     );
-
+  
     return "skippedKeyword";
   }
 
