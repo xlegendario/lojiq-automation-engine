@@ -111,6 +111,42 @@ export const config = {
     process.env.SHOPIFY_API_VERSION ||
     "2026-07",
 
+  // Store fulfillment sync
+  storeFulfillmentEnabled: bool(
+    "STORE_FULFILLMENT_SYNC_ENABLED",
+    false
+  ),
+
+  storeFulfillmentShadowMode: bool(
+    "STORE_FULFILLMENT_SYNC_SHADOW_MODE",
+    true
+  ),
+
+  storeFulfillmentCron:
+    process.env
+      .STORE_FULFILLMENT_SYNC_CRON ||
+    "*/10 * * * *",
+
+  storeFulfillmentLookbackMinutes:
+    Math.max(
+      20,
+      Number(
+        process.env
+          .STORE_FULFILLMENT_LOOKBACK_MINUTES ||
+          280
+      )
+    ),
+
+  storeFulfillmentConcurrency:
+    Math.max(
+      1,
+      Number(
+        process.env
+          .STORE_FULFILLMENT_SYNC_CONCURRENCY ||
+          2
+      )
+    ),
+
   // Airtable
   airtableToken: required("AIRTABLE_TOKEN"),
 
