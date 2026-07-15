@@ -84,6 +84,33 @@ export const config = {
     )
   ),
 
+    // Pending Intake sync
+  pendingIntakeEnabled: bool(
+    "PENDING_INTAKE_SYNC_ENABLED",
+    false
+  ),
+
+  pendingIntakeShadowMode: bool(
+    "PENDING_INTAKE_SYNC_SHADOW_MODE",
+    true
+  ),
+
+  pendingIntakeCron:
+    process.env.PENDING_INTAKE_SYNC_CRON ||
+    "*/15 * * * *",
+
+  pendingIntakeConcurrency: Math.max(
+    1,
+    Number(
+      process.env
+        .PENDING_INTAKE_SYNC_CONCURRENCY || 3
+    )
+  ),
+
+  shopifyApiVersion:
+    process.env.SHOPIFY_API_VERSION ||
+    "2026-07",
+
   // Airtable
   airtableToken: required("AIRTABLE_TOKEN"),
 
@@ -94,6 +121,16 @@ export const config = {
   uolTableId:
     process.env.AIRTABLE_UOL_TABLE_ID ||
     "tblFdnvcyttZyGx0b",
+
+  pendingIntakeTableId:
+    process.env
+      .AIRTABLE_PENDING_INTAKE_TABLE_ID ||
+    "tbl3nKf6L3mzlkwAw",
+
+  merchantsTableId:
+    process.env
+      .AIRTABLE_MERCHANTS_TABLE_ID ||
+    "tbl5ZbrS4KdJ2QQaf",
 
   sellersTableId:
     process.env.AIRTABLE_SELLERS_TABLE_ID ||
