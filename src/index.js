@@ -15,6 +15,10 @@ import {
   runPendingIntakeSync,
 } from "./jobs/pendingIntakeSync.js";
 
+import {
+  runStoreFulfillmentSync,
+} from "./jobs/storeFulfillmentSync.js";
+
 const app = express();
 
 app.use(
@@ -27,6 +31,7 @@ const lastRuns = {
   trackingStatus: null,
   trackingCreation: null,
   pendingIntake: null,
+  storeFulfillment: null,
 };
 
 app.get(
@@ -76,6 +81,28 @@ app.get(
 
           lastRun:
             lastRuns.pendingIntake,
+        },
+
+        storeFulfillment: {
+          enabled:
+            config
+              .storeFulfillmentEnabled,
+
+          shadowMode:
+            config
+              .storeFulfillmentShadowMode,
+
+          schedule:
+            config
+              .storeFulfillmentCron,
+
+          lookbackMinutes:
+            config
+              .storeFulfillmentLookbackMinutes,
+
+          lastRun:
+            lastRuns
+              .storeFulfillment,
         },
       },
     });
@@ -142,6 +169,26 @@ app.post(
   }
 );
 
+app.post(
+  "/jobs/store-fulfillment-sync/run",
+  authorize,
+  async (_req, res) => {
+    const result =
+      await runAndStore(
+        "storeFulfillment",
+        "manual"
+      );
+
+    res
+      .status(
+        result?.skipped
+          ? 409
+          : 200
+      )
+      .json(result);
+  }
+);
+
 cron.schedule(
   config.trackingCron,
   () =>
@@ -171,6 +218,18 @@ cron.schedule(
   () =>
     void runAndStore(
       "pendingIntake",
+      "scheduler"
+    ),
+  {
+    timezone: "UTC",
+  }
+);
+
+cron.schedule(
+  config.storeFulfillmentCron,
+  () =>
+    void runAndStore(
+      "storeFulfillment",
       "scheduler"
     ),
   {
@@ -213,6 +272,19 @@ app.listen(
       `shadowMode=${config.pendingIntakeShadowMode}`
     );
 
+    console.log(
+      `[engine] store-fulfillment ` +
+      `schedule=` +
+      `${config.storeFulfillmentCron} ` +
+      `UTC ` +
+      `lookbackMinutes=` +
+      `${config.storeFulfillmentLookbackMinutes} ` +
+      `enabled=` +
+      `${config.storeFulfillmentEnabled} ` +
+      `shadowMode=` +
+      `${config.storeFulfillmentShadowMode}`
+    );
+
     if (config.runOnStart) {
       void runAndStore(
         "trackingStatus",
@@ -226,6 +298,11 @@ app.listen(
       
       void runAndStore(
         "pendingIntake",
+        "startup"
+      );
+
+      void runAndStore(
+        "storeFulfillment",
         "startup"
       );
     }
@@ -270,6 +347,14 @@ async function runAndStore(
     pendingIntake: {
       runner: runPendingIntakeSync,
       logName: "pending-intake",
+    },
+
+    storeFulfillment: {
+      runner:
+        runStoreFulfillmentSync,
+
+      logName:
+        "store-fulfillment",
     },
   };
 
