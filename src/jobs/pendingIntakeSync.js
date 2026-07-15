@@ -206,7 +206,7 @@ async function processRecord(record) {
   const skipKeyword =
     findMatchingSkipKeyword(
       fields["Shopify Product Name"],
-      merchant.fields["Pending Intake Skip"]
+      merchant.fields["Pending Intake Skip Keywords"]
     );
 
   if (skipKeyword) {
