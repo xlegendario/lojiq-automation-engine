@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "check": "node --check src/index.js && node --check src/jobs/trackingStatusSync.js && node --check src/jobs/trackingCreationSync.js && node --check src/services/aftership.js"
+    "check": "node --check src/index.js && node --check src/jobs/trackingStatusSync.js && node --check src/jobs/trackingCreationSync.js && node --check src/jobs/pendingIntakeSync.js && node --check src/services/aftership.js && node --check src/services/shopify.js"
   },
   "engines": {
     "node": ">=20"
