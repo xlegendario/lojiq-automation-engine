@@ -37,3 +37,24 @@ export async function updateRecord(baseId, tableId, recordId, fields) {
     body: JSON.stringify({ fields }),
   });
 }
+
+export async function createRecord(
+  baseId,
+  tableId,
+  fields,
+  {
+    typecast = false,
+  } = {}
+) {
+  return fetchJson(
+    `${API}/${baseId}/${tableId}`,
+    {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        fields,
+        typecast,
+      }),
+    }
+  );
+}
