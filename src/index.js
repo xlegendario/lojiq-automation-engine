@@ -11,6 +11,10 @@ import {
   runTrackingCreationSync,
 } from "./jobs/trackingCreationSync.js";
 
+import {
+  runPendingIntakeSync,
+} from "./jobs/pendingIntakeSync.js";
+
 const app = express();
 
 app.use(
@@ -22,6 +26,7 @@ app.use(
 const lastRuns = {
   trackingStatus: null,
   trackingCreation: null,
+  pendingIntake: null,
 };
 
 app.get(
@@ -57,6 +62,20 @@ app.get(
           lastRun:
             lastRuns
               .trackingCreation,
+        },
+
+        pendingIntake: {
+          enabled:
+            config.pendingIntakeEnabled,
+
+          shadowMode:
+            config.pendingIntakeShadowMode,
+
+          schedule:
+            config.pendingIntakeCron,
+
+          lastRun:
+            lastRuns.pendingIntake,
         },
       },
     });
@@ -103,6 +122,26 @@ app.post(
   }
 );
 
+app.post(
+  "/jobs/pending-intake-sync/run",
+  authorize,
+  async (_req, res) => {
+    const result =
+      await runAndStore(
+        "pendingIntake",
+        "manual"
+      );
+
+    res
+      .status(
+        result?.skipped
+          ? 409
+          : 200
+      )
+      .json(result);
+  }
+);
+
 cron.schedule(
   config.trackingCron,
   () =>
@@ -120,6 +159,18 @@ cron.schedule(
   () =>
     void runAndStore(
       "trackingCreation",
+      "scheduler"
+    ),
+  {
+    timezone: "UTC",
+  }
+);
+
+cron.schedule(
+  config.pendingIntakeCron,
+  () =>
+    void runAndStore(
+      "pendingIntake",
       "scheduler"
     ),
   {
@@ -154,6 +205,14 @@ app.listen(
       `${config.trackingCreationShadowMode}`
     );
 
+    console.log(
+      `[engine] pending-intake ` +
+      `schedule=${config.pendingIntakeCron} ` +
+      `UTC ` +
+      `enabled=${config.pendingIntakeEnabled} ` +
+      `shadowMode=${config.pendingIntakeShadowMode}`
+    );
+
     if (config.runOnStart) {
       void runAndStore(
         "trackingStatus",
@@ -162,6 +221,11 @@ app.listen(
 
       void runAndStore(
         "trackingCreation",
+        "startup"
+      );
+      
+      void runAndStore(
+        "pendingIntake",
         "startup"
       );
     }
@@ -192,27 +256,39 @@ async function runAndStore(
   job,
   source
 ) {
-  const isStatusJob =
-    job === "trackingStatus";
+  const runners = {
+    trackingStatus: {
+      runner: runTrackingStatusSync,
+      logName: "tracking-sync",
+    },
 
-  const runner =
-    isStatusJob
-      ? runTrackingStatusSync
-      : runTrackingCreationSync;
+    trackingCreation: {
+      runner: runTrackingCreationSync,
+      logName: "tracking-creation",
+    },
 
-  const logName =
-    isStatusJob
-      ? "tracking-sync"
-      : "tracking-creation";
+    pendingIntake: {
+      runner: runPendingIntakeSync,
+      logName: "pending-intake",
+    },
+  };
+
+  const selected = runners[job];
+
+  if (!selected) {
+    throw new Error(
+      `Unknown automation job: ${job}`
+    );
+  }
 
   try {
     const result =
-      await runner({ source });
+      await selected.runner({ source });
 
     lastRuns[job] = result;
 
     console.log(
-      `[${logName}] finished`,
+      `[${selected.logName}] finished`,
       result
     );
 
@@ -228,7 +304,7 @@ async function runAndStore(
     lastRuns[job] = result;
 
     console.error(
-      `[${logName}] fatal`,
+      `[${selected.logName}] fatal`,
       error
     );
 
