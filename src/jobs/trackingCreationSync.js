@@ -145,20 +145,15 @@ export async function runTrackingCreationSync({
 async function processOrder(order) {
   const fields = order.fields;
 
-  const shopifyOrderNumber = String(
-    fields["Shopify Order Number"] || ""
-  );
-
-  // Exact Make router:
-  // Shopify Order Number mag niet "Private" bevatten.
-  if (shopifyOrderNumber.includes("Private")) {
-    console.log(
-      "[tracking-creation] SKIPPED_PRIVATE",
-      audit(order)
-    );
-
-    return "skippedPrivate";
-  }
+  /*
+   * REMOVED - orders whose Shopify Order Number contained "Private" were
+   * skipped here, carried over from the Make router this job replaced.
+   * A private order ships like any other and its tracking number is just
+   * as real: three valid UPS codes were sitting in the queue waiting for
+   * a tracking they were never going to get, with no error anywhere to
+   * say why. The counter below stays at zero rather than disappearing,
+   * so the shape of the health report does not change.
+   */
 
   const rawTrackingNumber = String(
     fields["Tracking Number"] || ""
