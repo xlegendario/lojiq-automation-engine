@@ -19,6 +19,10 @@ import {
   runStoreFulfillmentSync,
 } from "./jobs/storeFulfillmentSync.js";
 
+import {
+  runReleaseHeldOrders,
+} from "./jobs/releaseHeldOrders.js";
+
 const app = express();
 
 app.use(
@@ -32,6 +36,7 @@ const lastRuns = {
   trackingCreation: null,
   pendingIntake: null,
   storeFulfillment: null,
+  releaseHeldOrders: null,
 };
 
 app.get(
@@ -103,6 +108,24 @@ app.get(
           lastRun:
             lastRuns
               .storeFulfillment,
+        },
+
+        releaseHeldOrders: {
+          enabled:
+            config
+              .releaseHeldOrdersEnabled,
+
+          shadowMode:
+            config
+              .releaseHeldOrdersShadowMode,
+
+          schedule:
+            config
+              .releaseHeldOrdersCron,
+
+          lastRun:
+            lastRuns
+              .releaseHeldOrders,
         },
       },
     });
@@ -189,6 +212,26 @@ app.post(
   }
 );
 
+app.post(
+  "/jobs/release-held-orders/run",
+  authorize,
+  async (_req, res) => {
+    const result =
+      await runAndStore(
+        "releaseHeldOrders",
+        "manual"
+      );
+
+    res
+      .status(
+        result?.skipped
+          ? 409
+          : 200
+      )
+      .json(result);
+  }
+);
+
 cron.schedule(
   config.trackingCron,
   () =>
@@ -230,6 +273,18 @@ cron.schedule(
   () =>
     void runAndStore(
       "storeFulfillment",
+      "scheduler"
+    ),
+  {
+    timezone: "UTC",
+  }
+);
+
+cron.schedule(
+  config.releaseHeldOrdersCron,
+  () =>
+    void runAndStore(
+      "releaseHeldOrders",
       "scheduler"
     ),
   {
@@ -305,6 +360,11 @@ app.listen(
         "storeFulfillment",
         "startup"
       );
+
+      void runAndStore(
+        "releaseHeldOrders",
+        "startup"
+      );
     }
   }
 );
@@ -355,6 +415,11 @@ async function runAndStore(
 
       logName:
         "store-fulfillment",
+    },
+
+    releaseHeldOrders: {
+      runner: runReleaseHeldOrders,
+      logName: "release-held",
     },
   };
 
