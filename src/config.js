@@ -193,6 +193,24 @@ export const config = {
       .AIRTABLE_EXTERNAL_SALES_TABLE_ID ||
     "tbloLumvktySBlOvM",
 
+  // Releasing orders that were held for the store
+  releaseHeldOrdersEnabled: bool(
+    "RELEASE_HELD_ORDERS_ENABLED",
+    true
+  ),
+
+  releaseHeldOrdersShadowMode: bool(
+    "RELEASE_HELD_ORDERS_SHADOW_MODE",
+    true
+  ),
+
+  // Every five minutes. The window is measured in hours, so this is
+  // precise enough, and a store that gets two hours will not notice five
+  // minutes either way.
+  releaseHeldOrdersCron:
+    process.env.RELEASE_HELD_ORDERS_CRON ||
+    "*/5 * * * *",
+
   // AfterShip
   aftershipKey: required(
     "AFTERSHIP_API_KEY"
