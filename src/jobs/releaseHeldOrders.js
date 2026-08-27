@@ -86,10 +86,27 @@ export async function runReleaseHeldOrders({ source = "scheduler" } = {}) {
     // at all. The JS check below would still have refused to release them,
     // but the job would have walked the whole table every five minutes for
     // nothing.
+    //
+    // The last two conditions mirror autoAllocateBestUnit's own shouldRun,
+    // and they matter more than they look. This job must only ever release
+    // an order that would have gone to Outsource by itself - the hold is a
+    // delay, not a second route into the sellers' lists.
+    //
+    // A "High" or "Medium" risk order waits for someone to check the SKU
+    // match, and it waits whether or not its store has a hold. Without this
+    // it would have been pushed out after the window on its own, which is
+    // exactly the review this base exists to force. Caught on the very
+    // first live test: ORD-022601 came in as High.
+    //
+    // auto_allocate_attempted_at means the automation has already had its
+    // turn and deliberately left the order where it is. Releasing that
+    // would be overruling it.
     const formula =
       `AND(` +
       `{Fulfillment Status} = 'Pending',` +
-      `{Client Order Hold Hours} > 0` +
+      `{Client Order Hold Hours} > 0,` +
+      `{Match Risk Level} = 'Low',` +
+      `{auto_allocate_attempted_at} = BLANK()` +
       `)`;
 
     const orders = await listRecords(config.mainBaseId, config.uolTableId, {
