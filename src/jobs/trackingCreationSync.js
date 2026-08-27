@@ -22,6 +22,16 @@ const CREATION_FIELDS = [
   "Shipping Label",
 ];
 
+// A want-to-buy ships like an order and carries the same three tracking
+// fields. What it has instead of an order number is its own id, and there
+// is no External Sales row behind it.
+const MEMBER_WTB_CREATION_FIELDS = [
+  "Member WTB ID",
+  "Tracking Number",
+  "Tracking URL",
+  "Shipping Status",
+];
+
 export async function runTrackingCreationSync({
   source = "scheduler",
 } = {}) {
@@ -56,6 +66,18 @@ export async function runTrackingCreationSync({
     reusedExisting: 0,
     skippedPrivate: 0,
     invalidTracking: 0,
+
+    // Counted beside the order numbers rather than mixed into them, so a
+    // run stays readable and the existing figures keep meaning what they
+    // always meant.
+    memberWtb: {
+      checked: 0,
+      wouldCreate: 0,
+      created: 0,
+      reusedExisting: 0,
+      invalidTracking: 0,
+    },
+
     errors: [],
   };
 
@@ -127,6 +149,52 @@ export async function runTrackingCreationSync({
       )
     );
 
+    // A second pass over the other table, deliberately not one query over
+    // both: every write below has to know which table it belongs to, and
+    // getting that wrong writes a want-to-buy's tracking onto an order.
+    const memberWtbs = await listRecords(
+      config.mainBaseId,
+      config.memberWtbsTableId,
+      {
+        formula,
+        fields: MEMBER_WTB_CREATION_FIELDS,
+      }
+    );
+
+    await Promise.all(
+      memberWtbs.map(record =>
+        limit(async () => {
+          summary.memberWtb.checked += 1;
+
+          try {
+            const outcome =
+              await processMemberWtb(record);
+
+            summary.memberWtb[outcome] += 1;
+          } catch (error) {
+            const errorInfo = {
+              recordId: record.id,
+              memberWtbId:
+                record.fields["Member WTB ID"],
+              trackingNumber:
+                record.fields["Tracking Number"],
+              message: error.message,
+              status: error.status,
+              response: error.body,
+            };
+
+            summary.errors.push(errorInfo);
+
+            console.error(
+              "[tracking-creation] " +
+              "member wtb failed",
+              errorInfo
+            );
+          }
+        })
+      )
+    );
+
     return {
       ...summary,
       startedAt:
@@ -140,6 +208,160 @@ export async function runTrackingCreationSync({
   } finally {
     running = false;
   }
+}
+
+async function processMemberWtb(record) {
+  const fields = record.fields;
+
+  const rawTrackingNumber = String(
+    fields["Tracking Number"] || ""
+  ).trim();
+
+  const isUps = rawTrackingNumber
+    .toUpperCase()
+    .startsWith("1Z");
+
+  // Same two couriers the order side understands. Widening that is a
+  // separate decision and belongs in one place, not two.
+  const normalizedTrackingNumber = isUps
+    ? rawTrackingNumber
+    : rawTrackingNumber.match(/\d{14}/)?.[0];
+
+  if (!normalizedTrackingNumber) {
+    console.warn(
+      "[tracking-creation] MEMBER WTB INVALID_TRACKING",
+      auditMemberWtb(record, {
+        rawTrackingNumber,
+        carrierRoute: isUps ? "UPS" : "DPD",
+      })
+    );
+
+    return "invalidTracking";
+  }
+
+  if (config.trackingCreationShadowMode) {
+    console.log(
+      "[tracking-creation] MEMBER WTB WOULD_CREATE",
+      auditMemberWtb(record, {
+        carrierRoute: isUps ? "UPS" : "DPD",
+        normalizedTrackingNumber,
+      })
+    );
+
+    return "wouldCreate";
+  }
+
+  let trackingUrl;
+  let createdTrackingNumber = normalizedTrackingNumber;
+
+  try {
+    const tracking = await createTracking({
+      trackingNumber: normalizedTrackingNumber,
+      orderId: fields["Member WTB ID"],
+      airtableRecordId: record.id,
+    });
+
+    createdTrackingNumber = String(
+      tracking?.title ||
+        tracking?.tracking_number ||
+        normalizedTrackingNumber
+    );
+
+    trackingUrl = isUps
+      ? tracking?.courier_tracking_link
+      : buildDpdTrackingUrl(createdTrackingNumber);
+
+    if (!trackingUrl) {
+      throw new Error(
+        "AfterShip created the tracking but returned no courier tracking link"
+      );
+    }
+  } catch (error) {
+    if (!isDuplicateTrackingError(error)) {
+      throw error;
+    }
+
+    // AfterShip already knows this parcel. Whichever record registered it
+    // has the link, so it is copied rather than asked for again.
+    const existingUrl = await findExistingTrackingUrl(
+      normalizedTrackingNumber,
+      record.id
+    );
+
+    if (!existingUrl) {
+      throw error;
+    }
+
+    trackingUrl = existingUrl;
+  }
+
+  await updateRecord(
+    config.mainBaseId,
+    config.memberWtbsTableId,
+    record.id,
+    {
+      "Tracking Number": createdTrackingNumber,
+      "Tracking URL": trackingUrl,
+      "Shipping Status": "Pending",
+    }
+  );
+
+  console.log(
+    "[tracking-creation] MEMBER WTB CREATED",
+    auditMemberWtb(record, {
+      carrierRoute: isUps ? "UPS" : "DPD",
+      createdTrackingNumber,
+      trackingUrl,
+    })
+  );
+
+  return "created";
+}
+
+// The same parcel can already be registered from either table, so both are
+// asked. Returns the url that is already known, or "" when nothing is.
+async function findExistingTrackingUrl(
+  trackingNumber,
+  excludeRecordId
+) {
+  const existingOrder = await findExistingTrackedOrder(
+    trackingNumber,
+    excludeRecordId
+  );
+
+  if (existingOrder?.fields?.["Tracking URL"]) {
+    return existingOrder.fields["Tracking URL"];
+  }
+
+  const escaped = escapeFormulaString(trackingNumber);
+
+  const records = await listRecords(
+    config.mainBaseId,
+    config.memberWtbsTableId,
+    {
+      formula:
+        `AND({Tracking Number} = '${escaped}',` +
+        `{Tracking URL} != "")`,
+      fields: ["Tracking Number", "Tracking URL"],
+    }
+  );
+
+  const other = records.find(r => r.id !== excludeRecordId);
+
+  return other?.fields?.["Tracking URL"] || "";
+}
+
+function auditMemberWtb(record, extra = {}) {
+  return {
+    shadowMode:
+      config.trackingCreationShadowMode,
+    recordId: record.id,
+    memberWtbId:
+      record.fields["Member WTB ID"],
+    trackingNumber:
+      record.fields["Tracking Number"],
+    ...extra,
+  };
 }
 
 async function processOrder(order) {
