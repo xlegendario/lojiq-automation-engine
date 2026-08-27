@@ -53,6 +53,42 @@ export async function sendDeliveredDiscord({ order, seller, inventoryUnit }) {
   });
 }
 
+// The delivered embed for a Member WTB.
+//
+// A separate function rather than a branch inside sendDeliveredDiscord,
+// because almost every line differs: there is no store, no Shopify order
+// and no inventory unit here - there is a buyer and a want-to-buy number.
+// Bending one embed around both would have left half its fields reading
+// "Unknown".
+//
+// Only this one is sent. The shipped notification stays on the order side:
+// it posts to a service that knows nothing about want-to-buys, and the
+// buyer sees "Shipped" in the portal anyway.
+export async function sendMemberWtbDelivered({ memberWtb, buyer }) {
+  if (!config.deliveredDiscordWebhookUrl) return;
+
+  const f = memberWtb.fields;
+
+  await fetchJson(config.deliveredDiscordWebhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      embeds: [{
+        title: "📦 MEMBER WTB DELIVERED!",
+        description: `**${f["Product Name"] || ""}**\n${first(f.SKU) || ""}\n${f.Size || ""}\n${f.Brand || ""}`,
+        color: 16776960,
+        fields: [
+          { name: "Buyer:", value: buyer?.fields?.["Full Name"] || "Unknown", inline: false },
+          { name: "Member WTB:", value: f["Member WTB ID"] || "", inline: true },
+          { name: "Buyer ID:", value: buyer?.fields?.["Seller ID"] || "Unknown", inline: true },
+          { name: "\u200B", value: "\u200B", inline: false },
+          { name: "Payment Status:", value: f["Payment Status"] || "Unknown", inline: false },
+        ],
+      }],
+    }),
+  });
+}
+
 function first(value) {
   return Array.isArray(value) ? value[0] : value;
 }
