@@ -177,6 +177,13 @@ export const config = {
       .AIRTABLE_INVENTORY_UNITS_TABLE_ID ||
     "tblt1aavfuJgspt8x",
 
+  // A want-to-buy from a member ships like any order and carries the same
+  // three tracking fields, so the tracking jobs walk this table too.
+  memberWtbsTableId:
+    process.env
+      .AIRTABLE_MEMBER_WTBS_TABLE_ID ||
+    "tblPIj8O7e1dabZxn",
+
   externalBaseId:
     process.env.AIRTABLE_EXTERNAL_BASE_ID ||
     "appY9ZV7HJMYQbLUA",
