@@ -6,6 +6,7 @@ import {
 } from "../services/airtable.js";
 import {
   createTracking,
+  getTracking,
 } from "../services/aftership.js";
 import {
   escapeFormulaString,
@@ -281,12 +282,13 @@ async function processMemberWtb(record) {
       throw error;
     }
 
-    // AfterShip already knows this parcel. Whichever record registered it
-    // has the link, so it is copied rather than asked for again.
-    const existingUrl = await findExistingTrackingUrl(
-      normalizedTrackingNumber,
-      record.id
-    );
+    // AfterShip already knows this parcel, so this is an answer rather
+    // than a failure - see resolveExistingTrackingUrl.
+    const existingUrl = await resolveExistingTrackingUrl({
+      trackingNumber: normalizedTrackingNumber,
+      excludeRecordId: record.id,
+      isUps
+    });
 
     if (!existingUrl) {
       throw error;
@@ -458,21 +460,17 @@ async function processOrder(order) {
 
     return "created";
   } catch (error) {
-    /*
-     * Alleen fallback uitvoeren als AfterShip echt meldt
-     * dat deze tracking al bestaat.
-     */
+    // Only fall back when AfterShip actually says this tracking already
+    // exists; anything else is a real failure and stays one.
     if (!isDuplicateTrackingError(error)) {
       throw error;
     }
 
-    const existing = await findExistingTrackedOrder(
-      normalizedTrackingNumber,
-      order.id
-    );
-
-    const existingTrackingUrl =
-      existing?.fields?.["Tracking URL"];
+    const existingTrackingUrl = await resolveExistingTrackingUrl({
+      trackingNumber: normalizedTrackingNumber,
+      excludeRecordId: order.id,
+      isUps
+    });
 
     if (!existingTrackingUrl) {
       throw error;
@@ -650,6 +648,45 @@ async function findExternalSale(
     );
 
   return records[0] || null;
+}
+
+/*
+ * Where a parcel AfterShip already knows can be tracked.
+ *
+ * Airtable is asked first: if another record registered this parcel, its
+ * link is the one to copy, and nothing has to be fetched.
+ *
+ * That used to be the only question, which made one state permanent: the
+ * tracking exists at AfterShip but no record here carries the url yet.
+ * Every run then got "already exists", found nothing to copy, and gave up
+ * - so the parcel could never be written anywhere. MWTB-000402 and
+ * MWTB-000404 sat there, and ORD-022404 had been stuck that way for five
+ * days.
+ *
+ * So AfterShip is asked too. It is the one saying the parcel exists, so it
+ * is also the one that can say where it lives. A DPD link is built from
+ * the number itself and needs no call at all.
+ */
+async function resolveExistingTrackingUrl({
+  trackingNumber,
+  excludeRecordId,
+  isUps
+}) {
+  const fromAirtable = await findExistingTrackingUrl(
+    trackingNumber,
+    excludeRecordId
+  );
+
+  if (fromAirtable) return fromAirtable;
+
+  if (!isUps) {
+    return buildDpdTrackingUrl(trackingNumber);
+  }
+
+  const existing = await getTracking(trackingNumber)
+    .catch(() => null);
+
+  return existing?.courier_tracking_link || "";
 }
 
 function isDuplicateTrackingError(error) {
