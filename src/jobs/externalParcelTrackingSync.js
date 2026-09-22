@@ -75,28 +75,56 @@ export async function runExternalParcelTrackingSync(
         // portal notes the attempt so this parcel goes to the back of the
         // queue instead of being asked about again straight away.
         if (!tracking) {
-          const created = config.externalParcelsShadowMode
-            ? null
-            : await createTracking({
-                trackingNumber: parcel.tracking_number,
-                orderId: parcel.deal,
-                airtableRecordId: parcel.id,
-              }).catch(error => {
-                // Already there, added by someone else: fine, read it next
-                // run like any other.
-                if (error.status === 409) return null;
-                throw error;
-              });
-
-          if (!config.externalParcelsShadowMode) {
-            await portal("/tracking/registered", {
-              id: parcel.id,
-              aftership_id: created?.id || "",
-            });
+          if (config.externalParcelsShadowMode) {
+            summary.registered += 1;
+            console.log("[external-parcels] WOULD REGISTER", audit(parcel));
+            return;
           }
 
-          summary.registered += 1;
-          console.log("[external-parcels] REGISTERED", audit(parcel));
+          let created = null;
+          let note = "";
+
+          try {
+            created = await createTracking({
+              trackingNumber: parcel.tracking_number,
+              orderId: parcel.deal,
+              airtableRecordId: parcel.id,
+            });
+          } catch (error) {
+            // Four deals from before this shared one tracking number, and
+            // AfterShip keeps one tracking per number: the second one is a
+            // refusal, not a failure. Read it next run like any other.
+            if (!isAlreadyThere(error)) {
+              note = `AfterShip refused this number: ${
+                error.body?.meta?.message || error.message
+              }`.slice(0, 300);
+
+              summary.errors.push({
+                parcelId: parcel.id,
+                deal: parcel.deal,
+                trackingNumber: parcel.tracking_number,
+                message: error.message,
+                status: error.status,
+                response: error.body?.meta || error.body,
+              });
+
+              console.error("[external-parcels] not registered", summary.errors.at(-1));
+            }
+          }
+
+          // Even a refusal is written down, so this parcel goes to the back
+          // of the queue instead of being the first thing asked every hour.
+          await portal("/tracking/registered", {
+            id: parcel.id,
+            aftership_id: created?.id || "",
+            note,
+          });
+
+          if (!note) {
+            summary.registered += 1;
+            console.log("[external-parcels] REGISTERED", audit(parcel));
+          }
+
           return;
         }
 
@@ -193,6 +221,20 @@ const STATUS_BY_TAG = {
   Exception: "exception",
   Expired: "exception",
 };
+
+// AfterShip has this number already - its own, or one of ours under another
+// parcel. Either way there is nothing to create.
+function isAlreadyThere(error) {
+  const meta = error?.body?.meta || {};
+  const message = String(meta.message || error?.message || "").toLowerCase();
+
+  return (
+    error?.status === 409 ||
+    meta.code === 4003 ||
+    message.includes("already exists") ||
+    message.includes("already tracked")
+  );
+}
 
 async function portal(path, body) {
   return fetchJson(
