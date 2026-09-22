@@ -211,6 +211,37 @@ export const config = {
     process.env.RELEASE_HELD_ORDERS_CRON ||
     "*/5 * * * *",
 
+  // External Sales parcels (block 6). Their parcels live in Supabase, so
+  // this job works through the Lojiq portal rather than Airtable.
+  externalParcelsEnabled: bool(
+    "EXTERNAL_PARCEL_SYNC_ENABLED",
+    false
+  ),
+
+  externalParcelsShadowMode: bool(
+    "EXTERNAL_PARCEL_SYNC_SHADOW_MODE",
+    true
+  ),
+
+  externalParcelsCron:
+    process.env.EXTERNAL_PARCEL_SYNC_CRON ||
+    "20 * * * *",
+
+  externalParcelsBatchSize: Math.max(
+    1,
+    Number(
+      process.env
+        .EXTERNAL_PARCEL_SYNC_BATCH_SIZE || 100
+    )
+  ),
+
+  lojiqPortalBaseUrl: (
+    process.env.LOJIQ_PORTAL_BASE_URL || ""
+  ).replace(/\/$/, ""),
+
+  lojiqPortalSecret:
+    process.env.COUNTER_OFFERS_SECRET || "",
+
   // AfterShip
   aftershipKey: required(
     "AFTERSHIP_API_KEY"

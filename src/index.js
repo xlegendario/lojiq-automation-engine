@@ -23,6 +23,10 @@ import {
   runReleaseHeldOrders,
 } from "./jobs/releaseHeldOrders.js";
 
+import {
+  runExternalParcelTrackingSync,
+} from "./jobs/externalParcelTrackingSync.js";
+
 const app = express();
 
 app.use(
@@ -37,6 +41,7 @@ const lastRuns = {
   pendingIntake: null,
   storeFulfillment: null,
   releaseHeldOrders: null,
+  externalParcels: null,
 };
 
 app.get(
@@ -108,6 +113,22 @@ app.get(
           lastRun:
             lastRuns
               .storeFulfillment,
+        },
+
+        externalParcels: {
+          enabled:
+            config
+              .externalParcelsEnabled,
+
+          shadowMode:
+            config
+              .externalParcelsShadowMode,
+
+          schedule:
+            config.externalParcelsCron,
+
+          lastRun:
+            lastRuns.externalParcels,
         },
 
         releaseHeldOrders: {
@@ -213,6 +234,26 @@ app.post(
 );
 
 app.post(
+  "/jobs/external-parcel-sync/run",
+  authorize,
+  async (_req, res) => {
+    const result =
+      await runAndStore(
+        "externalParcels",
+        "manual"
+      );
+
+    res
+      .status(
+        result?.skipped
+          ? 409
+          : 200
+      )
+      .json(result);
+  }
+);
+
+app.post(
   "/jobs/release-held-orders/run",
   authorize,
   async (_req, res) => {
@@ -281,6 +322,18 @@ cron.schedule(
 );
 
 cron.schedule(
+  config.externalParcelsCron,
+  () =>
+    void runAndStore(
+      "externalParcels",
+      "scheduler"
+    ),
+  {
+    timezone: "UTC",
+  }
+);
+
+cron.schedule(
   config.releaseHeldOrdersCron,
   () =>
     void runAndStore(
@@ -340,6 +393,17 @@ app.listen(
       `${config.storeFulfillmentShadowMode}`
     );
 
+    console.log(
+      `[engine] external-parcels ` +
+      `schedule=` +
+      `${config.externalParcelsCron} ` +
+      `UTC ` +
+      `enabled=` +
+      `${config.externalParcelsEnabled} ` +
+      `shadowMode=` +
+      `${config.externalParcelsShadowMode}`
+    );
+
     if (config.runOnStart) {
       void runAndStore(
         "trackingStatus",
@@ -363,6 +427,11 @@ app.listen(
 
       void runAndStore(
         "releaseHeldOrders",
+        "startup"
+      );
+
+      void runAndStore(
+        "externalParcels",
         "startup"
       );
     }
@@ -420,6 +489,13 @@ async function runAndStore(
     releaseHeldOrders: {
       runner: runReleaseHeldOrders,
       logName: "release-held",
+    },
+
+    externalParcels: {
+      runner:
+        runExternalParcelTrackingSync,
+
+      logName: "external-parcels",
     },
   };
 
