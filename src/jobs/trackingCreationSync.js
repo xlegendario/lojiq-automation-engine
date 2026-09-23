@@ -522,59 +522,10 @@ async function applyTracking(
       }
     );
 
-  const external =
-    await findExternalSale(
-      updatedOrder.fields[
-        "Order ID"
-      ]
-    );
-
-  if (!external) {
-    return;
-  }
-
-  const externalFields = {
-    "Tracking Number":
-      updatedOrder.fields[
-        "Tracking Number"
-      ],
-    "Tracking URL":
-      updatedOrder.fields[
-        "Tracking URL"
-      ],
-    "Shipping Status":
-      "Pending",
-  };
-
-  const shippingLabel =
-    firstAttachment(
-      updatedOrder.fields[
-        "Shipping Label"
-      ]
-    );
-
-  if (shippingLabel?.url) {
-    externalFields[
-      "Shipping Label"
-    ] = [
-      {
-        url: shippingLabel.url,
-        ...(shippingLabel.filename
-          ? {
-              filename:
-                shippingLabel.filename,
-            }
-          : {}),
-      },
-    ];
-  }
-
-  await updateRecord(
-    config.externalBaseId,
-    config.externalSalesTableId,
-    external.id,
-    externalFields
-  );
+  // The Airtable External Sales Log is read-only since block 9
+  // (23-09-2026): a deal sold on externally lives in Supabase, where the
+  // portal's own parcels carry the tracking.
+  return updatedOrder;
 }
 
 async function findExistingTrackedOrder(
@@ -610,39 +561,6 @@ async function findExistingTrackedOrder(
           "Tracking Number",
           "Tracking URL",
           "Shipping Status",
-        ],
-      }
-    );
-
-  return records[0] || null;
-}
-
-async function findExternalSale(
-  orderId
-) {
-  if (!orderId) {
-    return null;
-  }
-
-  const escapedOrderId =
-    escapeFormulaString(orderId);
-
-  const formula =
-    `{Order Number} = ` +
-    `'${escapedOrderId}'`;
-
-  const records =
-    await listRecords(
-      config.externalBaseId,
-      config.externalSalesTableId,
-      {
-        formula,
-        fields: [
-          "Order Number",
-          "Tracking Number",
-          "Tracking URL",
-          "Shipping Status",
-          "Shipping Label",
         ],
       }
     );
@@ -717,12 +635,6 @@ function buildDpdTrackingUrl(
       trackingNumber
     )
   );
-}
-
-function firstAttachment(value) {
-  return Array.isArray(value)
-    ? value[0]
-    : null;
 }
 
 function audit(

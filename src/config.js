@@ -184,15 +184,6 @@ export const config = {
       .AIRTABLE_MEMBER_WTBS_TABLE_ID ||
     "tblPIj8O7e1dabZxn",
 
-  externalBaseId:
-    process.env.AIRTABLE_EXTERNAL_BASE_ID ||
-    "appY9ZV7HJMYQbLUA",
-
-  externalSalesTableId:
-    process.env
-      .AIRTABLE_EXTERNAL_SALES_TABLE_ID ||
-    "tbloLumvktySBlOvM",
-
   // Releasing orders that were held for the store
   releaseHeldOrdersEnabled: bool(
     "RELEASE_HELD_ORDERS_ENABLED",

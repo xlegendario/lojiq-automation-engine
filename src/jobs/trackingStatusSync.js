@@ -3,7 +3,6 @@ import { config } from "../config.js";
 import { listRecords, getRecord, updateRecord } from "../services/airtable.js";
 import { getTracking } from "../services/aftership.js";
 import { sendDeliveredDiscord, sendItemShipped, sendMemberWtbDelivered } from "../services/notifications.js";
-import { escapeFormulaString } from "../utils/http.js";
 
 let running = false;
 
@@ -187,17 +186,10 @@ async function handleShipped(order) {
     });
   }
 
-  const external = await findExternalSale(order.fields["Order ID"]);
-  if (external && !config.shadowMode) {
-    await updateRecord(config.externalBaseId, config.externalSalesTableId, external.id, {
-      "Shipping Status": "Shipped",
-    });
-  }
-
   // Make's second router route is unconditional, so this notification is always sent.
   if (!config.shadowMode) await sendItemShipped(order);
 
-  console.log("[tracking-sync] SHIPPED", audit(order, { externalSaleId: external?.id || null }));
+  console.log("[tracking-sync] SHIPPED", audit(order));
 }
 
 async function handleDelivered(order) {
@@ -208,37 +200,17 @@ async function handleDelivered(order) {
     });
   }
 
-  const [external, seller, inventoryUnit] = await Promise.all([
-    findExternalSale(order.fields["Order ID"]),
+  const [seller, inventoryUnit] = await Promise.all([
     getFirstLinked(config.mainBaseId, config.sellersTableId, order.fields["Linked Seller ID"]),
     getFirstLinked(config.mainBaseId, config.inventoryUnitsTableId, order.fields["Linked Inventory Unit"]),
   ]);
 
-  // Make always executes its first delivered route, and additionally updates External Sales when found.
-  if (!config.shadowMode) {
-    await sendDeliveredDiscord({ order, seller, inventoryUnit });
-    if (external) {
-      await updateRecord(config.externalBaseId, config.externalSalesTableId, external.id, {
-        "Shipping Status": "Delivered",
-      });
-    }
-  }
+  if (!config.shadowMode) await sendDeliveredDiscord({ order, seller, inventoryUnit });
 
   console.log("[tracking-sync] DELIVERED", audit(order, {
-    externalSaleId: external?.id || null,
     sellerId: seller?.id || null,
     inventoryUnitId: inventoryUnit?.id || null,
   }));
-}
-
-async function findExternalSale(orderId) {
-  if (!orderId) return null;
-  const formula = `{Order Number} = '${escapeFormulaString(orderId)}'`;
-  const records = await listRecords(config.externalBaseId, config.externalSalesTableId, {
-    formula,
-    fields: ["Order Number", "Shipping Status"],
-  });
-  return records[0] || null;
 }
 
 async function getFirstLinked(baseId, tableId, value) {
