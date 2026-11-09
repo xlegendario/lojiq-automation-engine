@@ -40,6 +40,7 @@ const PENDING_FIELDS = [
   "Quantity",
   "Order Age (Hours)",
   "Order Taken?",
+  "Queue Skipped?",
   "Payment Status",
 ];
 
@@ -151,7 +152,8 @@ async function processRecord(record) {
   const storeName =
     firstValue(fields["Store Name"]);
 
-  if (EXCLUDED_STORES.has(storeName)) {
+  // Skip Queue is someone deciding by hand, so it outranks this list.
+  if (EXCLUDED_STORES.has(storeName) && !fields["Queue Skipped?"]) {
     console.log(
       "[pending-intake] SKIPPED_STORE",
       audit(record, { storeName })
