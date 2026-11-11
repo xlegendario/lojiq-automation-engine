@@ -206,7 +206,22 @@ async function runStore({ key, store, write, compare, lookbackMinutes, decisions
     apiVersion: config.shopifyApiVersion,
   };
 
-  const minutes = lookbackMinutes || store.lookbackMinutes;
+  // A store with Order Hold Hours gets that time to cancel an order it can
+  // fill itself. An order created at night would run out its hold before
+  // anyone at the store is awake, so those stores only get orders between
+  // 07:00 and midnight; the 07:00 run picks up the night (Make did the same
+  // with a 565-minute look back).
+  const holdHours = Number(m["Order Hold Hours"]) || 0;
+
+  if (holdHours > 0 && !lookbackMinutes && !withinHours(DAY_HOURS)) {
+    return { ...stats, skipped: "night: picked up at 07:00 (Order Hold Hours)" };
+  }
+
+  const minutes =
+    lookbackMinutes ||
+    (holdHours > 0
+      ? Math.max(store.lookbackMinutes, NIGHT_LOOKBACK_MINUTES)
+      : store.lookbackMinutes);
   const updatedAtMin = new Date(Date.now() - minutes * 60000).toISOString();
 
   // 1. Candidate lines, through the store's settings.
@@ -529,6 +544,20 @@ async function createIntakeRecord({ decision, merchant, candidate }) {
     if (!p.picture) throw error;
     await createRecord(config.mainBaseId, tableId, fields);
   }
+}
+
+const DAY_HOURS = { from: 7, to: 24 };
+const NIGHT_LOOKBACK_MINUTES = 565;
+
+function withinHours({ from, to }) {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      hour: "numeric",
+      hourCycle: "h23",
+      timeZone: "Europe/Amsterdam",
+    }).format(new Date())
+  );
+  return hour >= from && hour < to;
 }
 
 const STORE_KEY_BY_MERCHANT = new Map(
