@@ -44,6 +44,11 @@ export async function createRecord(
   fields,
   {
     typecast = false,
+    // A POST is not safe to repeat: a request that timed out may still have
+    // created the record. Callers that cannot afford a duplicate pass
+    // retries: 0 and check for the record themselves.
+    retries,
+    timeoutMs,
   } = {}
 ) {
   return fetchJson(
@@ -55,6 +60,10 @@ export async function createRecord(
         fields,
         typecast,
       }),
+    },
+    {
+      ...(retries === undefined ? {} : { retries }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
     }
   );
 }

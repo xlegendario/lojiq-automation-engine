@@ -532,16 +532,52 @@ async function createIntakeRecord({ decision, merchant, candidate }) {
   const tableId =
     decision.target === "uol" ? config.uolTableId : config.pendingIntakeTableId;
 
+  const withPicture = p.picture
+    ? { ...fields, [f.picture]: [{ url: p.picture }] }
+    : fields;
+
   try {
-    await createRecord(config.mainBaseId, tableId, {
-      ...fields,
-      ...(p.picture ? { [f.picture]: [{ url: p.picture }] } : {}),
-    });
+    await createWithoutDuplicate(tableId, withPicture, order.id, line.variant_id);
   } catch (error) {
     // Make's fallback: a picture URL Airtable refuses should not cost the order.
-    if (!p.picture) throw error;
-    await createRecord(config.mainBaseId, tableId, fields);
+    if (!p.picture || !isRefusal(error)) throw error;
+    await createWithoutDuplicate(tableId, fields, order.id, line.variant_id);
   }
+}
+
+// Airtable answered and said no: the record was not created.
+function isRefusal(error) {
+  return Boolean(error?.status) && error.status < 500 && error.status !== 408 && error.status !== 429;
+}
+
+// Create once. When the outcome is unknown (timeout, 5xx, 429) the record
+// may exist anyway - 11-11 a request that timed out had already written the
+// record and the blind retry made a second one - so look before trying again.
+async function createWithoutDuplicate(tableId, fields, orderId, variantId) {
+  const once = () =>
+    createRecord(config.mainBaseId, tableId, fields, { retries: 0, timeoutMs: 60000 });
+
+  try {
+    await once();
+    return;
+  } catch (error) {
+    if (isRefusal(error)) throw error;
+    console.warn("[order-intake] create outcome unknown, checking", error.message);
+  }
+
+  await new Promise(resolve => setTimeout(resolve, 5000));
+
+  const formula =
+    `AND({Shopify Order ID}='${escapeFormulaString(String(orderId))}',` +
+    `{Shopify Variant ID}='${escapeFormulaString(String(variantId))}')`;
+  const found = await listRecords(config.mainBaseId, tableId, {
+    formula,
+    fields: ["Shopify Order ID"],
+  });
+
+  if (found.length) return;
+
+  await once();
 }
 
 const DAY_HOURS = { from: 7, to: 24 };
