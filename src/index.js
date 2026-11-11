@@ -140,6 +140,7 @@ app.get(
           // Switch per watcher in Airtable "Automation State":
           // watcher:<key> = Make / Test / Live.
           schedule: "*/5 * * * *",
+          rompslompToken: Boolean(config.rompslompToken),
           results: watcherResults(),
         },
 
