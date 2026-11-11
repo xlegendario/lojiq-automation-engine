@@ -1,301 +1,175 @@
-// Per-store rules of the order intake, taken from the Make scenarios
-// "Phase 6.1.2: New Shopify Orders to Airtable (...)".
+// Per-store settings of the order intake.
 //
-// Every store answers the same questions:
-//   - which Shopify orders to read (query, lookback),
-//   - which line items count (lineFilter),
-//   - what the size is,
-//   - where the line goes: an order for us (UOL) or a Pending Intake that the
-//     store gets to look at first (route).
+// Every store has the same handful of settings, so they can move to a
+// settings page later without code:
 //
-// Text checks follow Make: "contains" is case-sensitive unless Make had the
-// ":ci" variant, which uses ci() here.
+//   minPrice            a line must cost more than this, in the store's own
+//                       currency (PLN for APLUG, RON for Sosu)
+//   currency            converted to euro for Airtable; default EUR
+//   excludeWords        a line is skipped when its product name or variant
+//                       title contains one of these (case does not matter).
+//                       Variant words mark stock the store ships itself:
+//                       APLUG "48H"/"72H", SNEAKEREGEER "⚡".
+//   excludeSkus         a line is skipped when its SKU contains one of these
+//   shoesOnly           skip lines whose size has no number (clothing)
+//   excludeOrderTags    skip whole orders carrying one of these tags
+//   excludeRoundPrices  skip lines priced at a whole amount (SneakerAsk)
+//   paidOnly            only paid orders, plus cash on delivery
+//   stockCheck          null: every line is an order for us (UOL).
+//                       { ownLocations }: when Shopify assigned the line to
+//                       one of these locations and the store still has stock
+//                       there, the store looks first (Pending Intake).
+//   connectInventory    stock the item at our location in their Shopify,
+//                       so "Move to our location" can work later
+//   skuSource           only for lines without a store listing: "product"
+//                       takes the product's SKU (variant SKUs of these
+//                       stores carry the size), "line" the line's own SKU
+//
+// Size and SKU come from the store listing; without one, the size is read
+// with normalizeSize (the same reader as the Active Products sync) and the
+// product is matched through Retailed.
 
-const has = (text, part) => String(text ?? "").includes(part);
-const ci = (text, part) =>
-  String(text ?? "").toLowerCase().includes(String(part).toLowerCase());
-const price = line => Number(line.price);
-const notFulfilled = line =>
-  String(line.fulfillment_status ?? "").toLowerCase() !== "fulfilled";
-const neverFulfilled = line => line.fulfillment_status == null;
-const noFlowstock = order => !has(order.tags, "FLOWSTOCK");
-
-// Size patterns. A size the pattern cannot find stopped the line in Make
-// (the regex module had "continue when no result" off).
-const SIZE_NUMBER_BEFORE_SYSTEM =
-  /\b(\d{1,2}(?:[.,]\d+|\s+(?:1\/2|1\/3|2\/3|1\/4|3\/4)|\s*[½⅓⅔¼¾])?)\W*(?:EU|US|UK|JP|CN|FR|IT|RU)\b/i;
-const SIZE_SYSTEM_BEFORE_NUMBER =
-  /\b(?:EU|US|UK|JP|CN|FR|IT|RU)\W*(\d{1,2}(?:[.,]\d+|\s+(?:1\/2|1\/3|2\/3|1\/4|3\/4)|\s*[½⅓⅔¼¾])?)\b/i;
-
-const variantTitle = line =>
-  String(line.variant_title ?? "").replace(/⚡/g, "").trim();
-
-function regexSize(pattern) {
-  return line => {
-    const match = String(line.variant_title ?? "").match(pattern);
-    return match ? match[1] : null;
-  };
-}
-
-// Location routing shared by most stores (Make routes 1-4):
-//   assigned to us (or to a location that counts as ours) -> UOL
-//   store has stock at the assigned location (>= 0)        -> Pending Intake
-//   store sold below zero there (< 0)                       -> UOL, or only
-//     when the location is in `negativeOnlyAt` (other locations: nothing)
-//   not stocked / not tracked there                         -> `untracked`
-// null means: create nothing, as Make did when no route matched.
-function locationRoute({ ownLocations = [], negativeOnlyAt = null, untracked }) {
-  return ({ assigned, ourLocation, available }) => {
-    if (assigned && (assigned === ourLocation || ownLocations.includes(assigned))) {
-      return "uol";
-    }
-    if (available == null) return untracked;
-    if (available >= 0) return "pending";
-    if (negativeOnlyAt && !negativeOnlyAt.includes(assigned)) return null;
-    return "uol";
-  };
-}
-
-const always = target => () => target;
-
-// The main 6.1.2 scenario (no store suffix) served these four, each with its
-// own line filter.
-const mainScenario = {
-  scenario: "Phase 6.1.2 (main)",
-  requireLocationSync: true,
-  queries: [{ financial_status: "any" }],
-  lookbackMinutes: 145,
-  orderFilter: noFlowstock,
-  size: variantTitle,
-  sizeFromListing: false,
-  skuSource: "product",
+const defaults = {
+  minPrice: 50,
+  currency: "EUR",
+  excludeWords: [],
+  excludeSkus: [],
+  shoesOnly: false,
+  excludeOrderTags: [],
+  excludeRoundPrices: false,
+  paidOnly: false,
+  stockCheck: null,
   connectInventory: true,
-  route: locationRoute({ untracked: "pending" }),
+  skuSource: "product",
+  requireLocationSync: true,
+  lookbackMinutes: 145,
 };
+
+const store = settings => ({ ...defaults, ...settings });
 
 export const STORES = {
-  snrkickz: {
-    ...mainScenario,
-    merchantId: "rec06TCmWGe4A9cPk",
-    name: "Snrkickz",
-    lineFilter: line =>
-      price(line) > 50 &&
-      !has(line.name, "cadeaubon") &&
-      !has(line.name, "giftcard") &&
-      !has(line.name, "Maison Mihara") &&
-      !has(line.name, "Fear of God") &&
-      !has(line.name, "Labubu") &&
-      !has(line.name, "LABUBU") &&
-      !has(line.name, "Vans") &&
-      notFulfilled(line),
-  },
-
-  goldenbean: {
-    ...mainScenario,
+  goldenbean: store({
     merchantId: "recUCsNjUkAbw0QuC",
     name: "The Golden Bean Coffee & Kicks",
-    lineFilter: notFulfilled,
-  },
+    minPrice: 0,
+    excludeOrderTags: ["FLOWSTOCK"],
+  }),
 
-  fastcop: {
-    ...mainScenario,
+  fastcop: store({
     merchantId: "recnfpGr6MrJbEvwX",
     name: "FastCop Store",
-    lineFilter: notFulfilled,
-  },
+    minPrice: 0,
+    excludeOrderTags: ["FLOWSTOCK"],
+  }),
 
-  sneakeregeer: {
-    ...mainScenario,
+  sneakeregeer: store({
     merchantId: "rechUAQ4tLIp19QV9",
     name: "SNEAKEREGEER",
-    lineFilter: line =>
-      price(line) > 50 &&
-      !has(line.name, "cadeaubon") &&
-      !has(line.name, "giftcard") &&
-      notFulfilled(line) &&
-      !has(line.variant_title, "⚡"),
-    // In Make every SNEAKEREGEER line ended up as an order for us.
-    route: always("uol"),
-  },
+    excludeWords: ["cadeaubon", "giftcard", "⚡"],
+    excludeOrderTags: ["FLOWSTOCK"],
+  }),
 
-  aplug: {
-    scenario: "Phase 6.1.2 (APLUG)",
+  aplug: store({
     merchantId: "recj8Fr1aP7q3ks3J",
     name: "APLUG.PL",
-    queries: [{ financial_status: "any" }],
-    lookbackMinutes: 145,
+    minPrice: 215,
     currency: "PLN",
-    lineFilter: line =>
-      price(line) > 215 &&
-      !has(line.name, "cadeaubon") &&
-      !has(line.name, "giftcard") &&
-      !has(line.name, "Fear of God") &&
-      !has(line.name, "Pop Mart") &&
-      ci(line.variant_title, "EU") &&
-      !ci(line.variant_title, "48H") &&
-      !ci(line.variant_title, "72H"),
-    size: regexSize(/^(.*?) EU/),
-    sizeFromListing: true,
+    excludeWords: ["cadeaubon", "giftcard", "Fear of God", "Pop Mart", "48H", "72H"],
+    shoesOnly: true,
     skuSource: "line",
-    connectInventory: true,
-    route: locationRoute({ untracked: "uol" }),
-  },
+  }),
 
-  genky: {
-    scenario: "Phase 6.1.2 (Genky)",
+  genky: store({
     merchantId: "recNqfgpqHFppbkeT",
     name: "Genky Sneakers",
-    queries: [{ financial_status: "any" }],
-    lookbackMinutes: 145,
-    lineFilter: line =>
-      price(line) > 50 &&
-      !has(line.name, "cadeaubon") &&
-      !has(line.name, "giftcard") &&
-      !has(line.name, "Fear of God") &&
-      !has(line.name, "Pop Mart"),
-    size: regexSize(SIZE_SYSTEM_BEFORE_NUMBER),
-    sizeFromListing: false,
-    skuSource: "product",
-    connectInventory: true,
-    // Only a shortage at their own shop (81892147542) comes to us; a
-    // shortage at Turum B2B or Wallysneakers is theirs to source.
-    route: locationRoute({
-      ownLocations: ["100810326358"],
-      negativeOnlyAt: ["81892147542"],
-      untracked: null,
-    }),
-  },
+    excludeWords: ["cadeaubon", "giftcard", "Fear of God", "Pop Mart"],
+    shoesOnly: true,
+  }),
 
-  mentastore: {
-    scenario: "Phase 6.1.2 (Mentastore)",
+  mentastore: store({
     merchantId: "recmfT0GbMwQEQsJw",
     name: "Mentastore V.O.F.",
-    queries: [{ financial_status: "any", fulfillment_status: "unfulfilled" }],
-    lookbackMinutes: 145,
-    lineFilter: line =>
-      price(line) > 50 &&
-      !has(line.name, "cadeaubon") &&
-      !has(line.name, "giftcard") &&
-      !has(line.name, "Fear of God") &&
-      !has(line.name, "Pop Mart"),
-    size: regexSize(SIZE_SYSTEM_BEFORE_NUMBER),
-    sizeFromListing: false,
-    skuSource: "product",
-    connectInventory: true,
-    // Only a shortage at the Heuvelstraat shop (83579830614) comes to us.
-    // "Mentastore Magazijn" runs their own pre-orders below zero and the
-    // "sell portal" location ships nothing itself; Make never imported a
-    // shortage there (its filter compared location IDs as numbers).
-    route: locationRoute({
-      ownLocations: ["98526134614"],
-      negativeOnlyAt: ["83579830614"],
-      untracked: null,
-    }),
-  },
+    excludeWords: ["cadeaubon", "giftcard", "Fear of God", "Pop Mart"],
+    shoesOnly: true,
+  }),
 
-  madonnina: {
-    scenario: "Phase 6.1.2 (Madonnina)",
+  madonnina: store({
     merchantId: "recYPJ2d0pqJhrElT",
     name: "Madonnina Resell",
-    requireLocationSync: true,
-    // Cash-on-delivery orders are still "pending" at Shopify; Make read those
-    // separately and marked them Cash On Delivery.
-    queries: [
-      {
-        financial_status: "pending",
-        paymentStatus: "Cash On Delivery",
-        orderFilter: order =>
-          (order.payment_gateway_names || []).includes("Pagamento alla consegna"),
-      },
-      { financial_status: "paid", paymentStatus: "Paid" },
-    ],
-    lookbackMinutes: 145,
-    lineFilter: line =>
-      !has(line.name, "LABUBU") &&
-      !has(line.name, "Labubu") &&
-      !has(line.name, "Custom") &&
-      neverFulfilled(line) &&
-      !has(line.name, "Crep Protect") &&
-      !ci(line.sku, "U9060ERC"),
-    size: variantTitle,
-    sizeFromListing: false,
-    skuSource: "product",
-    connectInventory: true,
-    route: always("pending"),
-  },
+    minPrice: 0,
+    excludeWords: ["Labubu", "Custom", "Crep Protect"],
+    excludeSkus: ["U9060ERC"],
+    paidOnly: true,
+  }),
 
-  selectstore: {
-    scenario: "Phase 6.1.2 (Select Store Day)",
+  selectstore: store({
     merchantId: "recHzP1hUrh92w6s0",
     name: "ALC SELECT STORE SL",
-    requireLocationSync: true,
-    queries: [{ financial_status: "any" }],
-    lookbackMinutes: 565,
-    // Make only ran this one between 07:00 and midnight.
-    activeHours: { from: 7, to: 24 },
-    orderFilter: noFlowstock,
-    lineFilter: line =>
-      price(line) > 50 &&
-      !ci(line.name, "giftcard") &&
-      !ci(line.name, "Fear of God") &&
-      neverFulfilled(line),
-    size: variantTitle,
-    sizeFromListing: true,
-    skuSource: "product",
-    connectInventory: true,
-    route: always("uol"),
-  },
+    excludeWords: ["giftcard", "Fear of God"],
+    excludeOrderTags: ["FLOWSTOCK"],
+  }),
 
-  sosu: {
-    scenario: "Phase 6.1.2 (Sosu Kicks)",
+  sosu: store({
     merchantId: "recEFkQdnjaVzOTO6",
     name: "SOSU KICKS S.R.L.",
-    queries: [{ financial_status: "any" }],
-    lookbackMinutes: 145,
+    minPrice: 250,
     currency: "RON",
-    lineFilter: line =>
-      price(line) > 250 &&
-      !has(line.name, "cadeaubon") &&
-      !ci(line.name, "giftcard") &&
-      !ci(line.name, "Fear of God") &&
-      !has(line.name, "Pop Mart") &&
-      notFulfilled(line) &&
-      ci(line.name, "adidas XLG") &&
-      !ci(line.sku, "yzy-ys-01"),
-    size: line =>
-      String(line.variant_title ?? "").match(/^\s*(.+?)\s*EU\b/)?.[1] ||
-      line.variant_title,
-    sizeFromListing: true,
+    excludeWords: ["cadeaubon", "giftcard", "Fear of God", "Pop Mart", "adidas XLG"],
+    excludeSkus: ["yzy-ys-01"],
     skuSource: "line",
-    connectInventory: true,
-    // Only their warehouse 67834773642 can hold the pair for the store;
-    // anything else comes to us.
-    route: ({ assigned, available }) =>
-      assigned === "67834773642" && available != null && available >= 0
-        ? "pending"
-        : "uol",
-  },
+    stockCheck: { ownLocations: ["67834773642"] },
+  }),
 
-  sneakerask: {
-    scenario: "Phase 6.1.2 (SneakerAsk)",
+  sneakerask: store({
     merchantId: "recsG470xt53Vy8KF",
     name: "SneakerAsk",
-    queries: [{ financial_status: "any" }],
-    lookbackMinutes: 145,
-    lineFilter: line =>
-      price(line) >= 50.01 &&
-      !has(line.name, "Fear Of God") &&
-      !has(line.name, "Maison Mihara") &&
-      !has(line.price, ".00") &&
-      notFulfilled(line) &&
-      !has(line.name, "Custom"),
-    size: regexSize(SIZE_NUMBER_BEFORE_SYSTEM),
-    // Make took the size from the variant title here, even with a listing.
-    sizeFromListing: false,
-    skuSource: "product",
+    excludeWords: ["Fear Of God", "Maison Mihara", "Custom"],
+    excludeRoundPrices: true,
+    shoesOnly: true,
     connectInventory: false,
-    route: always("uol"),
-    // No location lookups needed when everything becomes an order.
-    needsLocation: false,
-  },
+  }),
 };
+
+const contains = (text, part) =>
+  String(text ?? "").toLowerCase().includes(String(part).toLowerCase());
+
+// Why a line is skipped, or null when it counts.
+export function lineSkipReason(settings, line) {
+  const price = Number(line.price);
+
+  if (!(price > settings.minPrice)) return "below minimum price";
+
+  if (settings.excludeRoundPrices && Number.isInteger(price)) {
+    return "whole-amount price";
+  }
+
+  if (String(line.fulfillment_status ?? "").toLowerCase() === "fulfilled") {
+    return "already fulfilled";
+  }
+
+  const word = settings.excludeWords.find(
+    w => contains(line.name, w) || contains(line.variant_title, w)
+  );
+  if (word) return `excluded word "${word}"`;
+
+  const sku = settings.excludeSkus.find(s => contains(line.sku, s));
+  if (sku) return `excluded SKU "${sku}"`;
+
+  return null;
+}
+
+const COD_GATEWAYS = ["pagamento alla consegna", "cash on delivery"];
+
+// "Paid", "Cash On Delivery", or null when the order is skipped.
+export function orderPaymentStatus(settings, order) {
+  const tags = String(order.tags ?? "");
+  if (settings.excludeOrderTags.some(tag => tags.includes(tag))) return null;
+
+  const cod = (order.payment_gateway_names || []).some(name =>
+    COD_GATEWAYS.includes(String(name).toLowerCase())
+  );
+
+  if (cod && order.financial_status !== "paid") return "Cash On Delivery";
+  if (settings.paidOnly && order.financial_status !== "paid") return null;
+  return "Paid";
+}

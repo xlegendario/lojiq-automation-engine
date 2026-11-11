@@ -27,7 +27,12 @@ import {
 import { findStoreListing } from "../services/supabase.js";
 import { searchStockxFirst } from "../services/retailed.js";
 import { escapeFormulaString } from "../utils/http.js";
-import { STORES } from "./orderIntakeStores.js";
+import { normalizeSize } from "../utils/sizes.js";
+import {
+  STORES,
+  lineSkipReason,
+  orderPaymentStatus,
+} from "./orderIntakeStores.js";
 
 let running = false;
 
@@ -165,10 +170,6 @@ async function runStore({ key, store, write, compare, lookbackMinutes, decisions
     errors: 0,
   };
 
-  if (store.activeHours && !withinHours(store.activeHours)) {
-    return { ...stats, skipped: "outside active hours" };
-  }
-
   const merchantRecord = await getRecord(
     config.mainBaseId,
     config.merchantsTableId,
@@ -197,32 +198,28 @@ async function runStore({ key, store, write, compare, lookbackMinutes, decisions
   const minutes = lookbackMinutes || store.lookbackMinutes;
   const updatedAtMin = new Date(Date.now() - minutes * 60000).toISOString();
 
-  // 1. Candidate lines, through the same filters as Make.
+  // 1. Candidate lines, through the store's settings.
   const candidates = [];
 
-  for (const query of store.queries) {
-    const { paymentStatus = "Paid", orderFilter, ...shopifyQuery } = query;
-    const orders = await listIntakeOrders({
-      ...shop,
-      query: { ...shopifyQuery, updated_at_min: updatedAtMin },
-    });
+  const orders = await listIntakeOrders({
+    ...shop,
+    query: { financial_status: "any", updated_at_min: updatedAtMin },
+  });
 
-    stats.orders += orders.length;
+  stats.orders += orders.length;
 
-    for (const order of orders) {
-      if (store.orderFilter && !store.orderFilter(order)) continue;
-      if (orderFilter && !orderFilter(order)) continue;
+  for (const order of orders) {
+    const paymentStatus = orderPaymentStatus(store, order);
 
-      for (const line of order.line_items || []) {
-        stats.lines += 1;
+    for (const line of order.line_items || []) {
+      stats.lines += 1;
 
-        if (!store.lineFilter(line)) {
-          stats.filteredOut += 1;
-          continue;
-        }
-
-        candidates.push({ order, line, paymentStatus });
+      if (!paymentStatus || lineSkipReason(store, line)) {
+        stats.filteredOut += 1;
+        continue;
       }
+
+      candidates.push({ order, line, paymentStatus });
     }
   }
 
@@ -322,13 +319,18 @@ async function decideLine({ store, merchant, shop, candidate, rate, fulfillmentC
     shopifyVariantId: String(line.variant_id),
   });
 
-  // Size first: when a store's size pattern finds nothing, Make dropped the
-  // line (except where a listing supplies the size).
-  const size =
-    store.sizeFromListing && listing ? listing.size : store.size(line);
+  // The listing holds the size as the Active Products sync read it; without
+  // a listing the same reader runs on the variant title.
+  const size = String(
+    (listing?.size || normalizeSize(line.variant_title)) ?? ""
+  ).trim();
 
   if (!size) {
-    return { target: null, reason: "no size in variant title", size: null };
+    return { target: null, reason: "no size", size: null };
+  }
+
+  if (store.shoesOnly && !/\d/.test(size)) {
+    return { target: null, reason: `not a shoe size: ${size}`, size };
   }
 
   let product;
@@ -392,7 +394,9 @@ async function decideLine({ store, merchant, shop, candidate, rate, fulfillmentC
   let assigned = "";
   let available = null;
 
-  if (store.needsLocation !== false) {
+  // Only a store that keeps stock in Shopify and has no auto accept needs the
+  // check; every other line is an order for us.
+  if (store.stockCheck) {
     const orderKey = String(order.id);
 
     if (!fulfillmentCache.has(orderKey)) {
@@ -419,11 +423,13 @@ async function decideLine({ store, merchant, shop, candidate, rate, fulfillmentC
     }
   }
 
-  const target = store.route({
-    assigned,
-    ourLocation: merchant.ourLocation,
-    available,
-  });
+  const target =
+    store.stockCheck &&
+    store.stockCheck.ownLocations.includes(assigned) &&
+    available != null &&
+    available >= 0
+      ? "pending"
+      : "uol";
 
   return {
     target,
@@ -573,13 +579,3 @@ async function eurRate(currency) {
   return rate;
 }
 
-function withinHours({ from, to }) {
-  const hour = Number(
-    new Intl.DateTimeFormat("en-GB", {
-      hour: "numeric",
-      hourCycle: "h23",
-      timeZone: "Europe/Amsterdam",
-    }).format(new Date())
-  );
-  return hour >= from && hour < to;
-}
