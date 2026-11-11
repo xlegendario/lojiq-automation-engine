@@ -206,20 +206,18 @@ async function runStore({ key, store, write, compare, lookbackMinutes, decisions
     apiVersion: config.shopifyApiVersion,
   };
 
-  // A store with Order Hold Hours gets that time to cancel an order it can
-  // fill itself. An order created at night would run out its hold before
-  // anyone at the store is awake, so those stores only get orders between
-  // 07:00 and midnight; the 07:00 run picks up the night (Make did the same
-  // with a 565-minute look back).
-  const holdHours = Number(m["Order Hold Hours"]) || 0;
-
-  if (holdHours > 0 && !lookbackMinutes && !withinHours(DAY_HOURS)) {
-    return { ...stats, skipped: "night: picked up at 07:00 (Order Hold Hours)" };
+  // Orders only come in between 07:00 and midnight (Amsterdam). At night
+  // nobody looks, and a UOL record starts its clocks the moment it exists:
+  // the Quick Deal payout climbs from Outsource Start Time, and a store's
+  // Order Hold Hours (Select) would run out before the store can cancel.
+  // The runs in the 07:00 hour look back far enough to pick up the night.
+  if (!lookbackMinutes && !withinHours(DAY_HOURS)) {
+    return { ...stats, skipped: "night: picked up from 07:00" };
   }
 
   const minutes =
     lookbackMinutes ||
-    (holdHours > 0
+    (amsterdamHour() === DAY_HOURS.from
       ? Math.max(store.lookbackMinutes, NIGHT_LOOKBACK_MINUTES)
       : store.lookbackMinutes);
   const updatedAtMin = new Date(Date.now() - minutes * 60000).toISOString();
@@ -549,14 +547,18 @@ async function createIntakeRecord({ decision, merchant, candidate }) {
 const DAY_HOURS = { from: 7, to: 24 };
 const NIGHT_LOOKBACK_MINUTES = 565;
 
-function withinHours({ from, to }) {
-  const hour = Number(
+function amsterdamHour() {
+  return Number(
     new Intl.DateTimeFormat("en-GB", {
       hour: "numeric",
       hourCycle: "h23",
       timeZone: "Europe/Amsterdam",
     }).format(new Date())
   );
+}
+
+function withinHours({ from, to }) {
+  const hour = amsterdamHour();
   return hour >= from && hour < to;
 }
 
