@@ -266,6 +266,7 @@ async function runStore({ key, store, write, compare, lookbackMinutes, decisions
         variantId: String(line.variant_id),
         title: line.title,
         size: decision?.size ?? null,
+        price: decision?.price ?? null,
         sku: decision?.product?.sku ?? null,
         risk: decision?.product?.risk ?? null,
         via: decision?.via ?? null,
