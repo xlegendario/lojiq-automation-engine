@@ -111,6 +111,51 @@ export const config = {
     process.env.SHOPIFY_API_VERSION ||
     "2026-07",
 
+  // Order intake (replaces Make 6.1.2). Off and in shadow mode by default;
+  // stores are switched over one by one through ORDER_INTAKE_STORES.
+  orderIntakeEnabled: bool(
+    "ORDER_INTAKE_ENABLED",
+    false
+  ),
+
+  orderIntakeShadowMode: bool(
+    "ORDER_INTAKE_SHADOW_MODE",
+    true
+  ),
+
+  orderIntakeCron:
+    process.env.ORDER_INTAKE_CRON ||
+    "*/15 * * * *",
+
+  orderIntakeStores: (
+    process.env.ORDER_INTAKE_STORES || ""
+  )
+    .split(",")
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean),
+
+  supabaseUrl: (
+    process.env.SUPABASE_URL || ""
+  ).replace(/\/$/, ""),
+
+  supabaseKey:
+    process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+
+  retailedApiKey:
+    process.env.RETAILED_API_KEY || "",
+
+  retailedSearchUrl:
+    process.env.RETAILED_STOCKX_SEARCH_URL ||
+    "https://app.retailed.io/api/v1/scraper/stockx/search",
+
+  retailedRetryDelayMs: Math.max(
+    0,
+    Number(
+      process.env.RETAILED_RETRY_DELAY_MS ||
+        10000
+    )
+  ),
+
   // Store fulfillment sync
   storeFulfillmentEnabled: bool(
     "STORE_FULFILLMENT_SYNC_ENABLED",

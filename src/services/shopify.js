@@ -158,9 +158,132 @@ function assertShopifyCredentials({
   }
 }
 
+// ---------------------------------------------------------------------------
+// Order intake (replaces Make 6.1.2)
+// ---------------------------------------------------------------------------
+
+function intakeBase(storeUrl, accessToken) {
+  const baseUrl = normalizeStoreUrl(storeUrl);
+  assertShopifyCredentials({ baseUrl, accessToken });
+  return baseUrl;
+}
+
+// Full orders (with line_items) for the intake. `query` holds the same
+// filters the Make scenario put on orders.json; pages are followed, where
+// Make stopped at 250.
+export async function listIntakeOrders({
+  storeUrl,
+  accessToken,
+  apiVersion,
+  query,
+}) {
+  const baseUrl = intakeBase(storeUrl, accessToken);
+  const params = new URLSearchParams({ limit: "250", ...query });
+
+  let nextUrl =
+    `${baseUrl}/admin/api/${apiVersion}/orders.json?${params}`;
+
+  const orders = [];
+
+  while (nextUrl) {
+    const page = await shopifyRequestWithHeaders({
+      url: nextUrl,
+      accessToken,
+    });
+
+    if (!Array.isArray(page.body?.orders)) {
+      throw new Error("Shopify response did not contain an orders array");
+    }
+
+    orders.push(...page.body.orders);
+    nextUrl = getNextPageUrl(page.headers.get("link"));
+  }
+
+  return orders;
+}
+
+export async function getShopifyVariant({
+  storeUrl,
+  accessToken,
+  apiVersion,
+  variantId,
+}) {
+  const baseUrl = intakeBase(storeUrl, accessToken);
+  const { body } = await shopifyRequestWithHeaders({
+    url: `${baseUrl}/admin/api/${apiVersion}/variants/${encodeURIComponent(String(variantId))}.json`,
+    accessToken,
+  });
+  return body?.variant || null;
+}
+
+export async function getShopifyProduct({
+  storeUrl,
+  accessToken,
+  apiVersion,
+  productId,
+}) {
+  const baseUrl = intakeBase(storeUrl, accessToken);
+  const { body } = await shopifyRequestWithHeaders({
+    url: `${baseUrl}/admin/api/${apiVersion}/products/${encodeURIComponent(String(productId))}.json`,
+    accessToken,
+  });
+  return body?.product || null;
+}
+
+// "available" of one inventory item at one location; null when the item is
+// not stocked (or not tracked) there, which is what Make saw as "not exist".
+export async function getInventoryAvailable({
+  storeUrl,
+  accessToken,
+  apiVersion,
+  inventoryItemId,
+  locationId,
+}) {
+  const baseUrl = intakeBase(storeUrl, accessToken);
+  const params = new URLSearchParams({
+    inventory_item_ids: String(inventoryItemId),
+    location_ids: String(locationId),
+  });
+  const { body } = await shopifyRequestWithHeaders({
+    url: `${baseUrl}/admin/api/${apiVersion}/inventory_levels.json?${params}`,
+    accessToken,
+  });
+  const level = body?.inventory_levels?.[0];
+  if (!level || level.available == null) {
+    return null;
+  }
+  const available = Number(level.available);
+  return Number.isFinite(available) ? available : null;
+}
+
+// Stocks the item at our location in the store's Shopify, as Make did
+// before routing. Make ignored a failure here, so the caller does too.
+export async function connectInventoryToLocation({
+  storeUrl,
+  accessToken,
+  apiVersion,
+  inventoryItemId,
+  locationId,
+}) {
+  const baseUrl = intakeBase(storeUrl, accessToken);
+  await shopifyRequestWithHeaders({
+    url: `${baseUrl}/admin/api/${apiVersion}/inventory_levels/connect.json`,
+    accessToken,
+    method: "POST",
+    requestBody: {
+      location_id: Number(locationId),
+      inventory_item_id: Number(inventoryItemId),
+      relocate_if_necessary: true,
+    },
+    maxRetries: 1,
+  });
+}
+
 async function shopifyRequestWithHeaders({
   url,
   accessToken,
+  method = "GET",
+  requestBody,
   maxRetries = 4,
 }) {
   let lastError;
@@ -172,13 +295,17 @@ async function shopifyRequestWithHeaders({
   ) {
     try {
       const response = await fetch(url, {
-        method: "GET",
+        method,
         headers: {
           "X-Shopify-Access-Token":
             accessToken,
           "Content-Type":
             "application/json",
         },
+        body:
+          requestBody === undefined
+            ? undefined
+            : JSON.stringify(requestBody),
       });
 
       const text = await response.text();

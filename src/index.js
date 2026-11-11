@@ -27,6 +27,10 @@ import {
   runExternalParcelTrackingSync,
 } from "./jobs/externalParcelTrackingSync.js";
 
+import {
+  runOrderIntakeSync,
+} from "./jobs/orderIntakeSync.js";
+
 const app = express();
 
 app.use(
@@ -42,6 +46,7 @@ const lastRuns = {
   storeFulfillment: null,
   releaseHeldOrders: null,
   externalParcels: null,
+  orderIntake: null,
 };
 
 app.get(
@@ -113,6 +118,19 @@ app.get(
           lastRun:
             lastRuns
               .storeFulfillment,
+        },
+
+        orderIntake: {
+          enabled:
+            config.orderIntakeEnabled,
+          shadowMode:
+            config.orderIntakeShadowMode,
+          schedule:
+            config.orderIntakeCron,
+          stores:
+            config.orderIntakeStores,
+          lastRun:
+            lastRuns.orderIntake,
         },
 
         externalParcels: {
@@ -270,6 +288,58 @@ app.post(
           : 200
       )
       .json(result);
+  }
+);
+
+// Order intake. A manual run takes ?dryRun=1 (decide, never write),
+// ?compare=1 (also decide lines Make already imported and show what Make
+// made of them), ?stores=a,b and ?lookbackMinutes=N.
+app.post(
+  "/jobs/order-intake/run",
+  authorize,
+  async (req, res) => {
+    const flag = name =>
+      ["1", "true", "yes"].includes(
+        String(req.query[name] || "").toLowerCase()
+      );
+
+    const options = {
+      dryRun: flag("dryRun"),
+      compare: flag("compare"),
+      stores: String(req.query.stores || "")
+        .split(",")
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean),
+      lookbackMinutes:
+        Number(req.query.lookbackMinutes) || undefined,
+    };
+
+    const result =
+      await runAndStore(
+        "orderIntake",
+        "manual",
+        options
+      );
+
+    res
+      .status(
+        result?.skipped
+          ? 409
+          : 200
+      )
+      .json(result);
+  }
+);
+
+cron.schedule(
+  config.orderIntakeCron,
+  () =>
+    void runAndStore(
+      "orderIntake",
+      "scheduler"
+    ),
+  {
+    timezone: "UTC",
   }
 );
 
@@ -460,7 +530,8 @@ function authorize(
 
 async function runAndStore(
   job,
-  source
+  source,
+  options = {}
 ) {
   const runners = {
     trackingStatus: {
@@ -497,6 +568,11 @@ async function runAndStore(
 
       logName: "external-parcels",
     },
+
+    orderIntake: {
+      runner: runOrderIntakeSync,
+      logName: "order-intake",
+    },
   };
 
   const selected = runners[job];
@@ -509,7 +585,7 @@ async function runAndStore(
 
   try {
     const result =
-      await selected.runner({ source });
+      await selected.runner({ source, ...options });
 
     lastRuns[job] = result;
 
