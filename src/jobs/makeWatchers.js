@@ -29,6 +29,7 @@ const BASE = () => config.mainBaseId;
 
 const T = {
   uol: "tblFdnvcyttZyGx0b",
+  inventoryUnits: "tblt1aavfuJgspt8x",
   merchants: "tbl5ZbrS4KdJ2QQaf",
   sellers: "tblHXvGz5aRaw93jB",
   discordMembers: "tblLJUqstMaHTjBr6",
@@ -123,6 +124,90 @@ function partnerWtbBody(r) {
   };
 }
 
+// Make 14.1 / 14.4: the pair bought on StockX or GOAT becomes an Inventory
+// Unit of the marketplace "seller", and the purchase is booked in Rompslomp
+// on Voorraad | Scout (custom).
+const ROMPSLOMP_EXPENSES = "https://app.rompslomp.nl/api/v1/companies/1296508534/expenses";
+
+const amsterdamDate = iso =>
+  iso
+    ? new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Amsterdam" }).format(new Date(iso))
+    : undefined;
+
+async function marketplaceOrderToUnit(r, act, m) {
+  if (act.live && !config.rompslompToken) {
+    // Nothing half-done: without the token the expense would fail after the
+    // unit was made.
+    throw new Error("ROMPSLOMP_API_TOKEN is not set on this service");
+  }
+
+  const f = r.fields;
+  const price = Number(first(f[m.priceField]));
+  if (!Number.isFinite(price)) throw new Error(`${m.priceField} is empty`);
+  const orderNumber = text(f[m.orderNumberField]);
+  const purchaseDate = amsterdamDate(text(f.LastSyncAt));
+
+  await act.create(
+    T.inventoryUnits,
+    {
+      "Seller ID": [m.sellerId],
+      "Product Name": text(f["Product Name"]),
+      Source: "Outsourced",
+      Type: "Custom",
+      "Unfulfilled Orders Log": [r.id],
+      "Margin %": m.margin,
+      "Purchase Price": price,
+      "Availability Status": "Sold",
+      "Payment Note": String(price),
+      "VAT Type": m.vatType,
+      "Shipping Deduction": 0,
+      "Base Costs": 5,
+      "Payment Status": "Paid",
+      Brand: text(f.Brand),
+      ...(purchaseDate ? { "Purchase Date": purchaseDate } : {}),
+      "Verification Status": "Verified",
+      "Ticket Number": orderNumber,
+      SKU: text(f.SKU),
+      Size: text(f.Size),
+    },
+    { typecast: true }
+  );
+
+  await act.post(
+    ROMPSLOMP_EXPENSES,
+    {
+      expense: {
+        date: "",
+        state: "published",
+        type_account_id: 1506,
+        currency: "eur",
+        contact_id: 1610033116,
+        invoice_lines: [
+          {
+            description: `Purchase Order ${text(f["Order ID"])}`,
+            extended_description:
+              `${text(f["Product Name"])} - ${text(f.Size)}\n\n ${orderNumber}` +
+              (m.reverseCharge ? "\n\n BTW Verlegd" : ""),
+            price_per_unit: String(price),
+            vat_rate: "",
+            vat_type_id: 688369464,
+            quantity: "1.0",
+            product_id: null,
+            account_id: 1981496874,
+            account_path: "activa.current_assets.voorraad_scout_custom",
+          },
+        ],
+      },
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${config.rompslompToken}`,
+        Accept: "application/json",
+      },
+    }
+  );
+}
+
 async function merchantOf(r) {
   const id = first(r.fields.Client);
   if (!id) return {};
@@ -167,6 +252,51 @@ export const WATCHERS = [
       }
 
       act.skip("no route");
+    },
+  },
+
+  {
+    key: "stockx-order-to-unit",
+    make: "Phase 14.1: StockX Auto-Bid Order to Allocated",
+    kind: "watch",
+    table: T.uol,
+    triggerField: "Last Status Modification",
+    formula: `AND({Fulfillment Status} = 'StockX Processing', {Linked Inventory Unit} = "")`,
+    everyMinutes: 5,
+    async handle(r, act) {
+      if (text(r.fields["Store Name"]) === "SneakerAsk") return act.skip("SneakerAsk (14.2 does that one)");
+      await marketplaceOrderToUnit(r, act, {
+        sellerId: "SE-00309",
+        margin: "7.5%",
+        vatType: "VAT0",
+        priceField: "Final StockX Price",
+        orderNumberField: "StockX Order Number",
+        reverseCharge: true,
+      });
+    },
+  },
+
+  {
+    key: "goat-order-to-unit",
+    make: "Phase 14.4: GOAT Auto-Purchase Order to Allocated",
+    kind: "watch",
+    table: T.uol,
+    triggerField: "Last Status Modification",
+    formula: `AND({Fulfillment Status} = 'GOAT Processing', {Linked Inventory Unit} = "")`,
+    everyMinutes: 5,
+    async handle(r, act) {
+      if (text(r.fields["Store Name"]) === "SneakerAsk") return act.skip("SneakerAsk (14.5 does that one)");
+      // Make put the StockX price and StockX order number on the unit here
+      // (copied from 14.1); those are empty on a GOAT order. The GOAT ones
+      // are used, as Make's own Rompslomp line already did.
+      await marketplaceOrderToUnit(r, act, {
+        sellerId: "SE-00537",
+        margin: "15%",
+        vatType: "Margin",
+        priceField: "GOAT Final Price",
+        orderNumberField: "GOAT Order Number",
+        reverseCharge: false,
+      });
     },
   },
 
@@ -417,10 +547,10 @@ export function watcherResults() {
   return lastResults;
 }
 
-async function postJson(url, body) {
+async function postJson(url, body, extraHeaders = {}) {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...extraHeaders },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(60000),
   });
@@ -432,20 +562,21 @@ async function postJson(url, body) {
 
 function makeActions(live, log) {
   return {
+    live,
     skip(reason) {
       log.push({ skip: reason });
     },
-    async post(url, body) {
+    async post(url, body, { headers } = {}) {
       log.push({ post: url, body });
-      if (live) await postJson(url, body);
+      if (live) await postJson(url, body, headers);
     },
     async update(table, id, fields) {
       log.push({ update: table, id, fields });
       if (live) await updateRecord(BASE(), table, id, fields);
     },
-    async create(table, fields) {
+    async create(table, fields, { typecast = false } = {}) {
       log.push({ create: table, fields });
-      if (live) await createRecord(BASE(), table, fields, { retries: 0, timeoutMs: 60000 });
+      if (live) await createRecord(BASE(), table, fields, { typecast, retries: 0, timeoutMs: 60000 });
     },
   };
 }

@@ -123,6 +123,10 @@ export const config = {
     process.env.ORDER_INTAKE_CRON ||
     "*/15 * * * *",
 
+  // Rompslomp, for the purchase expenses of the StockX/GOAT watchers.
+  rompslompToken:
+    process.env.ROMPSLOMP_API_TOKEN || "",
+
   supabaseUrl: (
     process.env.SUPABASE_URL || ""
   ).replace(/\/$/, ""),
