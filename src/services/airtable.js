@@ -40,6 +40,13 @@ export async function getRecord(baseId, tableId, recordId) {
   return fetchJson(`${API}/${baseId}/${tableId}/${recordId}`, { headers: headers() });
 }
 
+export async function deleteRecord(baseId, tableId, recordId) {
+  return fetchJson(`${API}/${baseId}/${tableId}/${recordId}`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+}
+
 export async function updateRecord(baseId, tableId, recordId, fields) {
   return fetchJson(`${API}/${baseId}/${tableId}/${recordId}`, {
     method: "PATCH",

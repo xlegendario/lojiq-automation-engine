@@ -38,6 +38,24 @@ import {
 
 const app = express();
 
+// During a deploy Render keeps the old instance running until the new one
+// is up, and a few deploys in a row stack up. On 11-11 three instances ran
+// the 19:30 order intake together and each made the same UOL record. So a
+// fresh instance waits a few minutes before it runs anything on its own,
+// and an instance that is being replaced (SIGTERM) runs nothing new.
+const bootedAt = Date.now();
+const STARTUP_GRACE_MS = 3 * 60 * 1000;
+let shuttingDown = false;
+
+process.on("SIGTERM", () => {
+  shuttingDown = true;
+  console.log("[engine] SIGTERM: no new scheduled runs");
+});
+
+function mayRunUnattended() {
+  return !shuttingDown && Date.now() - bootedAt >= STARTUP_GRACE_MS;
+}
+
 app.use(
   express.json({
     limit: "1mb",
@@ -362,10 +380,15 @@ app.post(
 
 cron.schedule(
   "*/5 * * * *",
-  () =>
+  () => {
+    if (!mayRunUnattended()) {
+      console.log("[watchers] skipped: instance starting or stopping");
+      return;
+    }
     void runMakeWatchers({ source: "scheduler" }).catch(error =>
       console.error("[watchers] fatal", error)
-    ),
+    );
+  },
   {
     timezone: "UTC",
   }
@@ -616,6 +639,16 @@ async function runAndStore(
   };
 
   const selected = runners[job];
+
+  if (source !== "manual" && !mayRunUnattended()) {
+    const result = {
+      source,
+      skipped: true,
+      reason: shuttingDown ? "instance stopping" : "instance starting (deploy grace)",
+    };
+    console.log(`[${selected?.logName || job}] skipped`, result.reason);
+    return result;
+  }
 
   if (!selected) {
     throw new Error(

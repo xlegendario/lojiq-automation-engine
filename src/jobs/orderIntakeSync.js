@@ -13,6 +13,7 @@
 import { config } from "../config.js";
 import {
   createRecord,
+  deleteRecord,
   getRecord,
   listRecords,
 } from "../services/airtable.js";
@@ -557,27 +558,48 @@ async function createWithoutDuplicate(tableId, fields, orderId, variantId) {
   const once = () =>
     createRecord(config.mainBaseId, tableId, fields, { retries: 0, timeoutMs: 60000 });
 
-  try {
-    await once();
-    return;
-  } catch (error) {
-    if (isRefusal(error)) throw error;
-    console.warn("[order-intake] create outcome unknown, checking", error.message);
-  }
-
-  await new Promise(resolve => setTimeout(resolve, 5000));
-
   const formula =
     `AND({Shopify Order ID}='${escapeFormulaString(String(orderId))}',` +
     `{Shopify Variant ID}='${escapeFormulaString(String(variantId))}')`;
-  const found = await listRecords(config.mainBaseId, tableId, {
-    formula,
-    fields: ["Shopify Order ID"],
-  });
+  const findAll = () =>
+    listRecords(config.mainBaseId, tableId, { formula, fields: ["Shopify Order ID"] });
 
-  if (found.length) return;
+  let created;
 
-  await once();
+  try {
+    created = await once();
+  } catch (error) {
+    if (isRefusal(error)) throw error;
+    console.warn("[order-intake] create outcome unknown, checking", error.message);
+
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    if ((await findAll()).length) return;
+    created = await once();
+  }
+
+  await keepOnlyOldest(tableId, created?.id, findAll);
+}
+
+// Last line of defence when two engine instances ran at once (a deploy):
+// each looks again shortly after creating, and an instance whose record is
+// not the oldest of the copies deletes its own. It never touches a record it
+// did not make, so of N copies exactly the oldest survives.
+async function keepOnlyOldest(tableId, ownId, findAll) {
+  if (!ownId) return;
+  await new Promise(resolve => setTimeout(resolve, 4000));
+
+  const copies = await findAll();
+  if (copies.length < 2) return;
+
+  copies.sort((a, b) =>
+    String(a.createdTime).localeCompare(String(b.createdTime)) ||
+    String(a.id).localeCompare(String(b.id))
+  );
+
+  if (copies[0].id !== ownId && copies.some(c => c.id === ownId)) {
+    console.warn("[order-intake] duplicate of", copies[0].id, "- deleting own copy", ownId);
+    await deleteRecord(config.mainBaseId, tableId, ownId);
+  }
 }
 
 const DAY_HOURS = { from: 7, to: 24 };
