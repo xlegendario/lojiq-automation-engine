@@ -193,6 +193,20 @@ async function runStore({ key, store, write, compare, lookbackMinutes, decisions
     return { ...stats, skipped: "Location Sync is off" };
   }
 
+  // Merchants "Pending Intake Skip Keywords" count for the intake too: a
+  // store whose orders go straight to UOL never reaches the Pending Intake
+  // queue, where that field used to do its work (Madonnina: Fear of God).
+  const settings = {
+    ...store,
+    excludeWords: [
+      ...store.excludeWords,
+      ...String(m["Pending Intake Skip Keywords"] || "")
+        .split(/[\r\n,]+/)
+        .map((w) => w.trim())
+        .filter(Boolean),
+    ],
+  };
+
   const merchant = {
     id: store.merchantId,
     name: m["Store Name"] || store.name,
@@ -239,7 +253,7 @@ async function runStore({ key, store, write, compare, lookbackMinutes, decisions
     for (const line of order.line_items || []) {
       stats.lines += 1;
 
-      if (!paymentStatus || lineSkipReason(store, line)) {
+      if (!paymentStatus || lineSkipReason(settings, line)) {
         stats.filteredOut += 1;
         continue;
       }
