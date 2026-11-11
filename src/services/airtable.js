@@ -10,13 +10,23 @@ function headers() {
   };
 }
 
-export async function listRecords(baseId, tableId, { formula, fields = [], pageSize = 100 } = {}) {
+export async function listRecords(
+  baseId,
+  tableId,
+  { formula, fields = [], pageSize = 100, sort = [], view, maxRecords } = {}
+) {
   const records = [];
   let offset;
   do {
     const params = new URLSearchParams({ pageSize: String(pageSize) });
     if (formula) params.set("filterByFormula", formula);
     for (const field of fields) params.append("fields[]", field);
+    sort.forEach(({ field, direction = "asc" }, i) => {
+      params.set(`sort[${i}][field]`, field);
+      params.set(`sort[${i}][direction]`, direction);
+    });
+    if (view) params.set("view", view);
+    if (maxRecords) params.set("maxRecords", String(maxRecords));
     if (offset) params.set("offset", offset);
     const body = await fetchJson(`${API}/${baseId}/${tableId}?${params}`, { headers: headers() });
     records.push(...(body.records || []));

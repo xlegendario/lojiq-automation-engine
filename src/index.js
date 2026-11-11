@@ -31,6 +31,11 @@ import {
   runOrderIntakeSync,
 } from "./jobs/orderIntakeSync.js";
 
+import {
+  runMakeWatchers,
+  watcherResults,
+} from "./jobs/makeWatchers.js";
+
 const app = express();
 
 app.use(
@@ -129,6 +134,13 @@ app.get(
             "per store in Merchants: Order Intake Automation",
           lastRun:
             lastRuns.orderIntake,
+        },
+
+        watchers: {
+          // Switch per watcher in Airtable "Automation State":
+          // watcher:<key> = Make / Test / Live.
+          schedule: "*/5 * * * *",
+          results: watcherResults(),
         },
 
         externalParcels: {
@@ -326,6 +338,35 @@ app.post(
           : 200
       )
       .json(result);
+  }
+);
+
+// Watchers (former Make scenarios). ?only=key1,key2&force=1 runs them now.
+app.post(
+  "/jobs/watchers/run",
+  authorize,
+  async (req, res) => {
+    const only = String(req.query.only || "")
+      .split(",")
+      .map(value => value.trim())
+      .filter(Boolean);
+    const result = await runMakeWatchers({
+      source: "manual",
+      only: only.length ? only : undefined,
+      force: ["1", "true"].includes(String(req.query.force || "")),
+    });
+    res.status(result?.skipped ? 409 : 200).json({ ...result, results: watcherResults() });
+  }
+);
+
+cron.schedule(
+  "*/5 * * * *",
+  () =>
+    void runMakeWatchers({ source: "scheduler" }).catch(error =>
+      console.error("[watchers] fatal", error)
+    ),
+  {
+    timezone: "UTC",
   }
 );
 
