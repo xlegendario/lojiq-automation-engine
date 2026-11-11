@@ -123,12 +123,10 @@ app.get(
         orderIntake: {
           enabled:
             config.orderIntakeEnabled,
-          shadowMode:
-            config.orderIntakeShadowMode,
           schedule:
             config.orderIntakeCron,
           stores:
-            config.orderIntakeStores,
+            "per store in Merchants: Order Intake Automation",
           lastRun:
             lastRuns.orderIntake,
         },

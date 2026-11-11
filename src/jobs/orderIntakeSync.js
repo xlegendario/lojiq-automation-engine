@@ -4,11 +4,11 @@
 // Shopify Orders to Airtable (...)"; the per-store rules live in
 // orderIntakeStores.js.
 //
-// Safety:
-//   ORDER_INTAKE_ENABLED=false        job does nothing on the clock
-//   ORDER_INTAKE_SHADOW_MODE=true     reads and decides, writes nothing
-//   ORDER_INTAKE_STORES=sneakerask,…  only these stores (switch one by one,
-//                                     after turning its Make scenario off)
+// Which stores run, per store in Merchants "Order Intake Automation":
+//   Make (or empty)   the engine leaves the store alone
+//   Engine (test)     reads and decides, writes nothing
+//   Engine            imports (turn the store's Make scenario off first)
+// ORDER_INTAKE_ENABLED=false stops the whole job.
 
 import { config } from "../config.js";
 import {
@@ -89,7 +89,8 @@ const SHOE_SIZE = /^(?:(?:US|UK)\s?)?\d{1,2}(?:\.\d|\s?\d\/\d)?$/i;
  * @param {object}   options
  * @param {string}   options.source
  * @param {boolean}  options.dryRun          never write, whatever the env says
- * @param {string[]} options.stores          store keys; default ORDER_INTAKE_STORES
+ * @param {string[]} options.stores          store keys (manual runs); default:
+ *   every store set to Engine or Engine (test) in Merchants
  * @param {number}   options.lookbackMinutes override per-store lookback
  * @param {boolean}  options.compare         also decide lines that already
  *   exist and report what Make made of them (parity check, implies dryRun)
@@ -113,35 +114,38 @@ export async function runOrderIntakeSync({
 
   running = true;
   const startedAt = new Date();
-  const write = !manualReadOnly && !config.orderIntakeShadowMode;
-  const keys = stores?.length ? stores : config.orderIntakeStores;
-
   const summary = {
     source,
-    mode: write ? "live" : compare ? "compare" : "shadow",
+    mode: manualReadOnly ? (compare ? "compare" : "dry run") : "per store",
     startedAt: startedAt.toISOString(),
     stores: {},
     decisions: [],
   };
 
   try {
+    const modes = await loadStoreModes();
+    const keys = stores?.length ? stores : [...modes.keys()];
+
     for (const key of keys) {
       const store = STORES[key];
 
       if (!store) {
-        summary.stores[key] = { error: "unknown store key" };
+        summary.stores[key] = { error: modes.unknown?.[key] || "unknown store key" };
         continue;
       }
 
+      const mode = modes.get(key) || "Make";
+      const write = !manualReadOnly && mode === "Engine";
+
       try {
-        summary.stores[key] = await runStore({
+        summary.stores[key] = { mode, ...(await runStore({
           key,
           store,
           write,
           compare,
           lookbackMinutes,
           decisions: summary.decisions,
-        });
+        })) };
       } catch (error) {
         console.error(`[order-intake] ${key} failed`, error);
         summary.stores[key] = { error: error.message };
@@ -155,8 +159,11 @@ export async function runOrderIntakeSync({
   summary.durationMs = Date.now() - startedAt.getTime();
 
   // Keep the response small on the clock; show everything when asked.
-  if (source === "scheduler" && write) {
-    summary.decisions = summary.decisions.length;
+  // Test stores keep their decisions so /health shows what would happen.
+  if (source === "scheduler") {
+    summary.decisions = summary.decisions.filter(
+      d => summary.stores[d.store]?.mode !== "Engine"
+    );
   }
 
   return summary;
@@ -522,6 +529,38 @@ async function createIntakeRecord({ decision, merchant, candidate }) {
     if (!p.picture) throw error;
     await createRecord(config.mainBaseId, tableId, fields);
   }
+}
+
+const STORE_KEY_BY_MERCHANT = new Map(
+  Object.entries(STORES).map(([key, store]) => [store.merchantId, key])
+);
+
+// Store key -> "Engine" / "Engine (test)", from Merchants.
+async function loadStoreModes() {
+  const records = await listRecords(config.mainBaseId, config.merchantsTableId, {
+    formula:
+      "OR({Order Intake Automation}='Engine',{Order Intake Automation}='Engine (test)')",
+    fields: ["Store Name", "Order Intake Automation"],
+  });
+
+  const modes = new Map();
+  modes.unknown = {};
+
+  for (const record of records) {
+    const key = STORE_KEY_BY_MERCHANT.get(record.id);
+    const mode = record.fields["Order Intake Automation"];
+
+    if (key) {
+      modes.set(key, mode);
+    } else {
+      // Set in Merchants but no intake settings for it in the code yet.
+      const name = record.fields["Store Name"] || record.id;
+      modes.set(name, mode);
+      modes.unknown[name] = "no intake settings for this store yet";
+    }
+  }
+
+  return modes;
 }
 
 async function loadExisting(orderIds) {
