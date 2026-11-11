@@ -81,6 +81,10 @@ const PENDING = {
 
 const RISK_LEVELS = new Set(["Low", "Medium", "High"]);
 
+// A shoe size as normalizeSize leaves it: "42", "42.5", "38 2/3", or a
+// US/UK label. "PlayStation5 Pro Console" has a digit but is no size.
+const SHOE_SIZE = /^(?:(?:US|UK)\s?)?\d{1,2}(?:\.\d|\s?\d\/\d)?$/i;
+
 /**
  * @param {object}   options
  * @param {string}   options.source
@@ -232,7 +236,8 @@ async function runStore({ key, store, write, compare, lookbackMinutes, decisions
     [...new Set(candidates.map(c => String(c.order.id)))]
   );
 
-  const rate = store.currency ? await eurRate(store.currency) : 1;
+  const rate =
+    store.currency && store.currency !== "EUR" ? await eurRate(store.currency) : 1;
   const fulfillmentCache = new Map();
 
   for (const candidate of candidates) {
@@ -329,7 +334,7 @@ async function decideLine({ store, merchant, shop, candidate, rate, fulfillmentC
     return { target: null, reason: "no size", size: null };
   }
 
-  if (store.shoesOnly && !/\d/.test(size)) {
+  if (store.shoesOnly && !SHOE_SIZE.test(size)) {
     return { target: null, reason: `not a shoe size: ${size}`, size };
   }
 
