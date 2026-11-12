@@ -36,6 +36,7 @@ const T = {
   discordMembers: "tblLJUqstMaHTjBr6",
   labelUploadForm: "tblMJ56RgOHsKFBNZ",
   buyers: "tblMJLl9ifQBuRAcs",
+  stockLevels: "tblt8BLVZvlU0HUJ0",
 };
 
 const F = {
@@ -45,6 +46,11 @@ const F = {
   uolLabelFile: "fldjKMjTH7MrObi29",
   sellerDiscordMembers: "fldZZm33jnAhKO0cx",
   sellerDiscordId: "fldUASDIfNoD7hgxD",
+  unitStockLevels: "fldX208wyeLCUe1Rm",
+  stockLevelSkuMaster: "fldFBW2XRmPzJqdUI",
+  stockLevelUnits: "fldasFmbnT4nyP5aL",
+  stockLevelSku: "fldbKPQ6RjOBmwN3x",
+  stockLevelSize: "fldxzFuOUIcbp13ws",
 };
 
 const URL = {
@@ -207,6 +213,51 @@ async function marketplaceOrderToUnit(r, act, m) {
       },
     }
   );
+}
+
+// Make 3.2 met the units one by one, so a Stock Level it had just made was
+// found for the next unit with the same key. A run here remembers the ones it
+// made (or, in Test, would have made) for the same reason.
+const stockLevelsMadeThisRun = new Map();
+
+async function stockLevelFor(r, act) {
+  const f = r.fields;
+  // The unit's key reads the SKU Master; a new Stock Level gets the unit's
+  // own SKU text. When those differ, Make never found what it had made and
+  // made another one on every change. Both keys are looked up here.
+  const unitKey = text(f["Stock Counter Key"]);
+  const ownKey = `${text(f.SKU)}-${text(f.Size)}`;
+  const keys = [...new Set([unitKey, ownKey])];
+  if (keys.length > 1) act.note({ note: `SKU "${text(f.SKU)}" differs from its SKU Master key "${unitKey}"` });
+  const linked = Array.isArray(f["Stock Levels"]) ? f["Stock Levels"] : [];
+
+  let matches = keys.map(k => stockLevelsMadeThisRun.get(k)).filter(Boolean);
+  if (!matches.length) {
+    const found = await listRecords(BASE(), T.stockLevels, {
+      formula: `OR(${keys.map(k => `{Stock Counter Key} = "${escapeFormulaString(k)}"`).join(", ")})`,
+      fields: ["Stock Counter Key"],
+      maxRecords: 10,
+    });
+    // The unit's own key first, as Make searched that one.
+    found.sort((x, y) => (text(y.fields["Stock Counter Key"]) === unitKey) - (text(x.fields["Stock Counter Key"]) === unitKey));
+    matches = found.map(x => x.id);
+    if (matches.length > 1) act.note({ note: `${matches.length} Stock Levels match ${keys.join(" / ")}` });
+  }
+
+  if (matches.length) {
+    if (linked.some(id => matches.includes(id))) return act.skip("already linked");
+    await act.update(T.inventoryUnits, r.id, { [F.unitStockLevels]: [matches[0]] });
+    return;
+  }
+
+  // None yet: make it, linked to the unit (which links the unit to it too).
+  const created = await act.create(T.stockLevels, {
+    [F.stockLevelSkuMaster]: [text(f["SKU Master Link"])],
+    [F.stockLevelUnits]: [r.id],
+    [F.stockLevelSku]: text(f.SKU),
+    [F.stockLevelSize]: text(f.Size),
+  });
+  for (const k of keys) stockLevelsMadeThisRun.set(k, created?.id || "(new in this run)");
 }
 
 async function merchantOf(r) {
@@ -567,6 +618,21 @@ export const WATCHERS = [
       await act.update(T.uol, r.id, { [F.uolStatus]: "Found & Tracked" });
     },
   },
+
+  {
+    key: "stock-levels",
+    make: "Phase 3.2: Update Stock Levels (Modification)",
+    kind: "watch",
+    table: T.inventoryUnits,
+    // Size, Availability Status or SKU Master Link changed.
+    triggerField: "Last Stock Modified Time",
+    formula: `{SKU Master Link} != ""`,
+    fields: ["Item ID", "SKU", "Size", "SKU Master Link", "Stock Counter Key", "Stock Levels"],
+    everyMinutes: 5,
+    async handle(r, act) {
+      await stockLevelFor(r, act);
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -614,7 +680,8 @@ function makeActions(live, log) {
     },
     async create(table, fields, { typecast = false } = {}) {
       log.push({ create: table, fields });
-      if (live) await createRecord(BASE(), table, fields, { typecast, retries: 0, timeoutMs: 60000 });
+      if (live) return createRecord(BASE(), table, fields, { typecast, retries: 0, timeoutMs: 60000 });
+      return null;
     },
   };
 }
@@ -649,6 +716,7 @@ async function runWatch(w, live, result) {
 
   const records = await listRecords(w.base || BASE(), w.table, {
     formula,
+    fields: w.fields ? [...w.fields, w.triggerField] : [],
     sort: [{ field: w.triggerField, direction: "asc" }],
     maxRecords: 200,
   });
@@ -685,7 +753,7 @@ async function handleOne(w, r, live, result) {
     if (acted) result.acted += 1;
     else result.skipped += 1;
     if ((!live || acted) && result.records.length < 50) {
-      result.records.push({ id: r.id, label: r.fields["Order ID"] || r.fields.Name || r.fields["Seller ID"] || r.fields["Buyer ID"] || r.fields["Discord Username"] || "", log });
+      result.records.push({ id: r.id, label: r.fields["Order ID"] || r.fields["Item ID"] || r.fields.Name || r.fields["Seller ID"] || r.fields["Buyer ID"] || r.fields["Discord Username"] || "", log });
     }
   } catch (error) {
     // Logged and passed over, as Make moved on to the next bundle.
@@ -717,7 +785,8 @@ export async function runMakeWatchers({ source = "scheduler", only, force = fals
 
       const result = { mode, make: w.make, at: new Date().toISOString(), acted: 0, skipped: 0, records: [], errors: [] };
       try {
-        if (w.kind === "watch") await runWatch(w, mode === "Live", result);
+        stockLevelsMadeThisRun.clear();
+      if (w.kind === "watch") await runWatch(w, mode === "Live", result);
         else await runSearch(w, mode === "Live", result);
       } catch (error) {
         result.errors.push({ error: error.message });
