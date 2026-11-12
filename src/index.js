@@ -36,6 +36,11 @@ import {
   watcherResults,
 } from "./jobs/makeWatchers.js";
 
+import {
+  handlePurchaseExpense,
+  purchaseExpenseResults,
+} from "./jobs/purchaseExpenseHook.js";
+
 const app = express();
 
 // During a deploy Render keeps the old instance running until the new one
@@ -162,6 +167,13 @@ app.get(
           results: watcherResults(),
         },
 
+        hooks: {
+          // Endpoints that replace Make webhooks. Switch per hook in
+          // Automation State: hook:<key> = Make / Test / Live.
+          keySet: Boolean(config.hooksKey),
+          purchaseExpense: purchaseExpenseResults(),
+        },
+
         externalParcels: {
           enabled:
             config
@@ -199,6 +211,20 @@ app.get(
     });
   }
 );
+
+// Make 9.1: the purchase expense of a consignment / Member WTB unit, called
+// by the KC portal. The key travels in the URL, as Make's hook URL did.
+function hookKey(req, res, next) {
+  if (!config.hooksKey) {
+    return res.status(503).json({ error: "ENGINE_HOOKS_KEY is not set" });
+  }
+  if (req.query.key !== config.hooksKey) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+}
+
+app.post("/hooks/purchase-expense", hookKey, handlePurchaseExpense);
 
 app.post(
   "/jobs/tracking-status-sync/run",

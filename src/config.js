@@ -127,6 +127,11 @@ export const config = {
   rompslompToken:
     process.env.ROMPSLOMP_API_TOKEN || "",
 
+  // Key in the URL of the hooks that replace Make webhooks
+  // (/hooks/...?key=). Without it the hooks answer 503.
+  hooksKey:
+    process.env.ENGINE_HOOKS_KEY || "",
+
   supabaseUrl: (
     process.env.SUPABASE_URL || ""
   ).replace(/\/$/, ""),
