@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "check": "node --check src/index.js && node --check src/jobs/trackingStatusSync.js && node --check src/jobs/trackingCreationSync.js && node --check src/jobs/pendingIntakeSync.js && node --check src/jobs/storeFulfillmentSync.js && node --check src/services/aftership.js && node --check src/services/shopify.js && node --check src/jobs/orderIntakeSync.js && node --check src/jobs/orderIntakeStores.js && node --check src/services/supabase.js && node --check src/services/retailed.js && node --check src/jobs/makeWatchers.js && node --check src/services/automationState.js && node --check src/jobs/purchaseExpenseHook.js"
+    "check": "node --check src/index.js && node --check src/jobs/trackingStatusSync.js && node --check src/jobs/trackingCreationSync.js && node --check src/jobs/pendingIntakeSync.js && node --check src/jobs/storeFulfillmentSync.js && node --check src/services/aftership.js && node --check src/services/shopify.js && node --check src/jobs/orderIntakeSync.js && node --check src/jobs/orderIntakeStores.js && node --check src/services/supabase.js && node --check src/services/retailed.js && node --check src/jobs/makeWatchers.js && node --check src/services/automationState.js && node --check src/jobs/makeHooks.js && node --check src/services/rompslompPurchases.js && node --check src/services/payoutChannel.js"
   },
   "engines": {
     "node": ">=20"

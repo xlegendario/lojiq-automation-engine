@@ -37,9 +37,10 @@ import {
 } from "./jobs/makeWatchers.js";
 
 import {
-  handlePurchaseExpense,
-  purchaseExpenseResults,
-} from "./jobs/purchaseExpenseHook.js";
+  HOOKS,
+  hookHandler,
+  hookResults,
+} from "./jobs/makeHooks.js";
 
 const app = express();
 
@@ -171,7 +172,7 @@ app.get(
           // Endpoints that replace Make webhooks. Switch per hook in
           // Automation State: hook:<key> = Make / Test / Live.
           keySet: Boolean(config.hooksKey),
-          purchaseExpense: purchaseExpenseResults(),
+          ...hookResults(),
         },
 
         externalParcels: {
@@ -212,8 +213,8 @@ app.get(
   }
 );
 
-// Make 9.1: the purchase expense of a consignment / Member WTB unit, called
-// by the KC portal. The key travels in the URL, as Make's hook URL did.
+// Hooks that replace Make webhooks (src/jobs/makeHooks.js). The key travels
+// in the URL, as Make's hook URL did.
 function hookKey(req, res, next) {
   if (!config.hooksKey) {
     return res.status(503).json({ error: "ENGINE_HOOKS_KEY is not set" });
@@ -224,7 +225,9 @@ function hookKey(req, res, next) {
   next();
 }
 
-app.post("/hooks/purchase-expense", hookKey, handlePurchaseExpense);
+for (const key of Object.keys(HOOKS)) {
+  app.post(`/hooks/${key}`, hookKey, hookHandler(key));
+}
 
 app.post(
   "/jobs/tracking-status-sync/run",

@@ -23,6 +23,7 @@ import {
   updateRecord,
 } from "../services/airtable.js";
 import { getState, setState } from "../services/automationState.js";
+import { openPayoutChannel } from "../services/payoutChannel.js";
 import { escapeFormulaString } from "../utils/http.js";
 
 const BASE = () => config.mainBaseId;
@@ -378,6 +379,40 @@ export const WATCHERS = [
   },
 
   {
+    key: "seller-payout-channel",
+    make: "Phase 12.2.1: Process Confirmed Seller/Partner Offer Deal + Expenses",
+    kind: "search",
+    table: T.uol,
+    formula: `AND({Fulfillment Status} = "Confirmed", {Custom Offer} = "", {Lowest Offer} > 0, {Channel Created?} != 1, COUNTA({Consignment If Lowest}) = 0)`,
+    everyMinutes: 5,
+    async handle(r, act) {
+      const f = r.fields;
+      // The partner route (unit, partner feedback, Rompslomp, partner
+      // Discord webhooks) was last used in June 2026 and is retired.
+      if (text(f["Partner or Seller"]) !== "Seller") {
+        return act.skip(`"${text(f["Partner or Seller"])}" offer: only seller offers are handled`);
+      }
+      const result = await openPayoutChannel(
+        r.id,
+        {
+          orderId: text(f["Order ID"]),
+          productName: text(f["Product Name"]),
+          sku: text(f.SKU),
+          size: text(f.Size),
+          brand: text(f.Brand),
+          payout: Number(first(f["Lowest Seller Offer"])),
+          sellerCode: text(f["Lowest Offer Seller ID"]),
+          imageUrl: imageUrl(f),
+          discordUserId: text(f["Lowest Offer Discord ID"]),
+          vatType: text(f["Lowest Offer VAT Type"]),
+        },
+        { live: act.live }
+      );
+      act.note({ payoutChannel: result });
+    },
+  },
+
+  {
     key: "seller-discord-link",
     make: "Phase 13.3: Search Discord ID To Match Existing Sellers",
     kind: "watch",
@@ -565,6 +600,9 @@ function makeActions(live, log) {
     live,
     skip(reason) {
       log.push({ skip: reason });
+    },
+    note(entry) {
+      log.push(entry);
     },
     async post(url, body, { headers } = {}) {
       log.push({ post: url, body });
